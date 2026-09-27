@@ -7,17 +7,13 @@
 #include <Arduino.h>
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
+#include <ctype.h>
 
 namespace WatchfaceClock {
 
 namespace {
 const char* const weekdaysShort[] = {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
-};
-
-const char* const weekdaysFull[] = {
-    "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY",
-    "THURSDAY", "FRIDAY", "SATURDAY"
 };
 
 const char* const monthsShort[] = {
@@ -37,19 +33,29 @@ void drawCenteredText(Adafruit_GFX& display, const char* text, int16_t cx, int16
 } // namespace
 
 void render(Adafruit_GFX& display, const DateTime& time) {
+    const auto& cfg = WatchConfig::get();
     display.setFont(nullptr);
     display.setTextSize(1);
     display.setTextColor(0); // Black
 
-    // 1. TOP BAR: Date Badge (Left) & Battery Meter (Right)
+    // 1. TOP BAR: Date & AM/PM Badge (Left) & Battery Meter (Right)
     const uint8_t dow = time.dayOfTheWeek() % 7;
     const uint8_t mon = (time.month() >= 1 && time.month() <= 12) ? (time.month() - 1) : 0;
+    const char* const ampm = (time.hour() >= 12) ? "PM" : "AM";
 
-    char datePill[20];
-    snprintf(datePill, sizeof(datePill), "%s %u %s",
-             weekdaysShort[dow],
-             unsigned(time.day()),
-             monthsShort[mon]);
+    char datePill[24];
+    if (!cfg.militaryTime) {
+        snprintf(datePill, sizeof(datePill), "%s %u %s  %s",
+                 weekdaysShort[dow],
+                 unsigned(time.day()),
+                 monthsShort[mon],
+                 ampm);
+    } else {
+        snprintf(datePill, sizeof(datePill), "%s %u %s",
+                 weekdaysShort[dow],
+                 unsigned(time.day()),
+                 monthsShort[mon]);
+    }
 
     int16_t dx, dy;
     uint16_t dw, dh;
@@ -61,7 +67,7 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     display.print(datePill);
     display.setTextColor(0); // Black
 
-    // Battery readout
+    // Battery readout (Right margin: 10px)
     char battStr[10];
     if (Battery::isConnected()) {
         snprintf(battStr, sizeof(battStr), "%u%%", Battery::percentage());
@@ -76,11 +82,10 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     display.print(battStr);
     display.drawBitmap(166, 8, Battery::iconBitmap(), 24, 16, 0);
 
-    // Header divider line
+    // Header divider line (10px margins on both sides: 10 to 190)
     display.drawFastHLine(10, 30, 180, 0);
 
-    // 2. HERO TIME: Large bold FreeSansBold24pt7b
-    const auto& cfg = WatchConfig::get();
+    // 2. HERO TIME: Large bold FreeSansBold24pt7b, perfectly centered at X = 100
     char timeBuf[16];
     if (cfg.militaryTime) {
         snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u",
@@ -101,18 +106,7 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     display.setCursor(curX, curY);
     display.print(timeBuf);
 
-    // 12-hour AM/PM badge
-    if (!cfg.militaryTime) {
-        display.setFont(nullptr);
-        display.setTextSize(1);
-        display.fillRoundRect(curX + tw + 4, curY + ty1 + 2, 20, 11, 2, 0);
-        display.setTextColor(1);
-        display.setCursor(curX + tw + 6, curY + ty1 + 4);
-        display.print(time.hour() >= 12 ? "PM" : "AM");
-        display.setTextColor(0);
-    }
-
-    // Day progress gauge (0 - 1440 minutes)
+    // Day progress gauge (Centered: 24 to 176, width 152)
     const uint16_t minuteOfDay = time.hour() * 60 + time.minute();
     constexpr int16_t barX = 24;
     constexpr int16_t barY = 98;
@@ -125,44 +119,56 @@ void render(Adafruit_GFX& display, const DateTime& time) {
         display.fillRoundRect(barX, barY, max((int16_t)3, fillW), barH, 2, 0);
     }
 
-    // Mid divider line
+    // Mid divider line (Centered: 10 to 190)
     display.drawFastHLine(10, 114, 180, 0);
 
-    // 3. BOTTOM INFO: Full Day of Week & Year, Task glance, and Navigation hint
-    char fullDayBuf[32];
-    snprintf(fullDayBuf, sizeof(fullDayBuf), "%s, %u",
-             weekdaysFull[dow], unsigned(time.year()));
-    drawCenteredText(display, fullDayBuf, 100, 130, &FreeSansBold9pt7b);
+    // 3. BOTTOM INFO: Calendar Name, Event / Task glance, and Footer
+    char calTitle[32] = "MURENA TEAM";
+    if (cfg.caldavCalendar[0] != '\0') {
+        strncpy(calTitle, cfg.caldavCalendar, sizeof(calTitle) - 1);
+        calTitle[sizeof(calTitle) - 1] = '\0';
+        for (char* p = calTitle; *p; ++p) {
+            if (*p == '-' || *p == '_') *p = ' ';
+            else *p = toupper((unsigned char)*p);
+        }
+    }
+    drawCenteredText(display, calTitle, 100, 130, &FreeSansBold9pt7b);
 
-    // Task glance summary
+    // Event or task glance summary
     display.setFont(nullptr);
     display.setTextSize(1);
 
+    char glanceBuf[36] = "";
+    const size_t totalEvents = NetSync::eventCount();
     const size_t totalTodos = NetSync::todoCount();
-    size_t openCount = 0;
-    for (size_t i = 0; i < totalTodos; ++i) {
-        if (!NetSync::getTodo(i).completed) ++openCount;
-    }
 
-    char taskSummary[36];
-    if (totalTodos == 0) {
-        snprintf(taskSummary, sizeof(taskSummary), "CalDAV: %s", NetSync::lastStatus());
-    } else if (openCount == 0) {
-        snprintf(taskSummary, sizeof(taskSummary), "All %u tasks completed", (unsigned)totalTodos);
+    if (totalEvents > 0) {
+        const auto& ev = NetSync::getEvent(0);
+        snprintf(glanceBuf, sizeof(glanceBuf), "%.16s @ %s", ev.title, ev.timeStr);
+    } else if (totalTodos > 0) {
+        size_t openCount = 0;
+        for (size_t i = 0; i < totalTodos; ++i) {
+            if (!NetSync::getTodo(i).completed) ++openCount;
+        }
+        if (openCount == 0) {
+            snprintf(glanceBuf, sizeof(glanceBuf), "All %u tasks completed", (unsigned)totalTodos);
+        } else {
+            snprintf(glanceBuf, sizeof(glanceBuf), "%u of %u tasks pending",
+                     (unsigned)openCount, (unsigned)totalTodos);
+        }
     } else {
-        snprintf(taskSummary, sizeof(taskSummary), "%u of %u tasks pending",
-                 (unsigned)openCount, (unsigned)totalTodos);
+        snprintf(glanceBuf, sizeof(glanceBuf), "CalDAV: %s", NetSync::lastStatus());
     }
-    drawCenteredText(display, taskSummary, 100, 150);
+    drawCenteredText(display, glanceBuf, 100, 150);
 
-    // Bottom divider line
-    display.drawFastHLine(10, 168, 180, 0);
+    // Bottom divider line (Centered: 10 to 190)
+    display.drawFastHLine(10, 166, 180, 0);
 
-    // Clean button actions footer
+    // Symmetrical button actions footer (14px margin on both sides)
     display.setCursor(14, 178);
     display.print("B1: APPS");
 
-    display.setCursor(126, 178);
+    display.setCursor(138, 178);
     display.print("B2: SYNC");
 }
 

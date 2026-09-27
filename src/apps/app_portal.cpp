@@ -57,17 +57,35 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 
 <h3>CalDAV (Nextcloud / Cloud)</h3>
 <label>Server URL</label>
-<input type="text" name="dav_srv" value="%DAV_SRV%" placeholder="https://cloud.example.com/remote.php/dav/calendars/user/">
+<input type="text" name="dav_srv" value="%DAV_SRV%" placeholder="https://murena.io/remote.php/dav">
 <label>Username</label>
 <input type="text" name="dav_usr" value="%DAV_USR%">
 <label>App Password / Token</label>
 <input type="password" name="dav_pwd" value="%DAV_PWD%">
-<label>Events Calendar Name</label>
-<input type="text" name="dav_cal" value="%DAV_CAL%" placeholder="personal">
-<label>Tasks / Todo Calendar Name</label>
-<input type="text" name="dav_tod" value="%DAV_TOD%" placeholder="tasks">
 
-<h3>Clock & Timezone</h3>
+<label>Events Calendar</label>
+<div style="display:flex;gap:6px;margin-bottom:6px;">
+<button type="button" onclick="document.getElementById('cal_input').value='murena-team'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Murena Team</button>
+<button type="button" onclick="document.getElementById('cal_input').value='personal'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Personal</button>
+<button type="button" onclick="document.getElementById('cal_input').value='tasks'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Tasks</button>
+</div>
+<input type="text" id="cal_input" name="dav_cal" value="%DAV_CAL%" placeholder="murena-team or personal or full URL">
+
+<label>Tasks / Todo Calendar</label>
+<div style="display:flex;gap:6px;margin-bottom:6px;">
+<button type="button" onclick="document.getElementById('tod_input').value='tasks'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Tasks</button>
+<button type="button" onclick="document.getElementById('tod_input').value='murena-team'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Murena Team</button>
+<button type="button" onclick="document.getElementById('tod_input').value='personal'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Personal</button>
+</div>
+<input type="text" id="tod_input" name="dav_tod" value="%DAV_TOD%" placeholder="tasks or murena-team or personal">
+
+<h3>Clock & Time Format</h3>
+<label>Time Display Mode</label>
+<select name="fmt_24h">
+<option value="0" %FMT_12H%>12-Hour (12:26 AM / PM)</option>
+<option value="1" %FMT_24H%>24-Hour (00:26)</option>
+</select>
+
 <label>Timezone Offset (Minutes)</label>
 <select name="tz">
 <option value="330" %TZ_330%>+05:30 (India Standard Time)</option>
@@ -102,6 +120,9 @@ String renderHtml() {
     s.replace("%DAV_CAL%", cfg.caldavCalendar);
     s.replace("%DAV_TOD%", cfg.caldavTodoPath);
 
+    s.replace("%FMT_12H%", !cfg.militaryTime ? "selected" : "");
+    s.replace("%FMT_24H%", cfg.militaryTime ? "selected" : "");
+
     s.replace("%TZ_330%", cfg.timezoneOffsetMin == 330 ? "selected" : "");
     s.replace("%TZ_0%", cfg.timezoneOffsetMin == 0 ? "selected" : "");
     s.replace("%TZ_M300%", cfg.timezoneOffsetMin == -300 ? "selected" : "");
@@ -130,6 +151,9 @@ void handleSave() {
     }
     if (server.hasArg("tz")) {
         WatchConfig::setTimezone(server.arg("tz").toInt());
+    }
+    if (server.hasArg("fmt_24h")) {
+        WatchConfig::setTimeFormat(server.arg("fmt_24h") == "1");
     }
     WatchConfig::save();
 

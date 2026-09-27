@@ -28,10 +28,10 @@ void resetDefaults() {
     safeCopy(activeConfig.caldavServer, "", sizeof(activeConfig.caldavServer));
     safeCopy(activeConfig.caldavUser, "", sizeof(activeConfig.caldavUser));
     safeCopy(activeConfig.caldavPass, "", sizeof(activeConfig.caldavPass));
-    safeCopy(activeConfig.caldavCalendar, "personal", sizeof(activeConfig.caldavCalendar));
+    safeCopy(activeConfig.caldavCalendar, "murena-team", sizeof(activeConfig.caldavCalendar));
     safeCopy(activeConfig.caldavTodoPath, "tasks", sizeof(activeConfig.caldavTodoPath));
     activeConfig.timezoneOffsetMin = 330; // Default +05:30 (IST)
-    activeConfig.militaryTime = true;
+    activeConfig.militaryTime = false; // Default to 12-hour format (e.g. 12:26 AM)
     activeConfig.fullRefreshInterval = 20;
     safeCopy(activeConfig.apSsid, "ErsaWatch-Config", sizeof(activeConfig.apSsid));
     safeCopy(activeConfig.apPass, "12345678", sizeof(activeConfig.apPass));

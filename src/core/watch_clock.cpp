@@ -2,82 +2,89 @@
 #include "board_pins.h"
 #include "debug_log.h"
 #include <Wire.h>
-#include <esp_timer.h>
 
 namespace {
 RTC_DS3231 rtc;
 bool online = false, adjusted = false;
-uint32_t epoch = 0, lastPoll = 0;
-int64_t anchorUs = 0;
+DateTime cachedTime(2026, 9, 28, 0, 0, 0);
+uint32_t lastReadMs = 0;
+uint32_t lastRtcPollMs = 0;
 
-// Set true for ONE upload if you need to correct an already-running RTC.
-// Restore false afterwards. Build time is approximate local wall time.
 constexpr bool SET_FROM_BUILD = false;
 
 bool valid(const DateTime& time) {
     return time.isValid() && time.year() >= 2024 && time.year() <= 2099;
 }
-void anchor(const DateTime& time) {
-    epoch = time.unixtime();
-    anchorUs = esp_timer_get_time();
-}
+
 bool responds() {
     Wire.beginTransmission(0x68);
     const uint8_t error = Wire.endTransmission();
     if (error) DebugLog::log("RTC address=0x68 I2C error=%u", unsigned(error));
     return error == 0;
 }
-}
+} // namespace
 
 void WatchClock::begin() {
-    anchor(DateTime(F(__DATE__), F(__TIME__)));
     Wire.begin(Pins::SDA, Pins::SCL);
     Wire.setClock(100000);
     Wire.setTimeOut(50);
-    if (!rtc.begin(&Wire)) {
-        DebugLog::log("RTC not found; software time fallback");
-        return;
+
+    if (rtc.begin(&Wire) && responds()) {
+        const DateTime rtcVal = rtc.now();
+        if (!SET_FROM_BUILD && valid(rtcVal)) {
+            cachedTime = rtcVal;
+            online = true;
+            DebugLog::log("RTC online: %04u-%02u-%02u %02u:%02u:%02u",
+                          unsigned(rtcVal.year()), unsigned(rtcVal.month()), unsigned(rtcVal.day()),
+                          unsigned(rtcVal.hour()), unsigned(rtcVal.minute()), unsigned(rtcVal.second()));
+        } else {
+            // Only set to build time if uninitialized/corrupt (year < 2024) or explicitly forced
+            const DateTime buildDt(F(__DATE__), F(__TIME__));
+            rtc.adjust(buildDt);
+            cachedTime = buildDt;
+            online = true;
+            adjusted = true;
+            DebugLog::log("RTC uninitialized; adjusted to build time %04u-%02u-%02u %02u:%02u:%02u",
+                          unsigned(buildDt.year()), unsigned(buildDt.month()), unsigned(buildDt.day()),
+                          unsigned(buildDt.hour()), unsigned(buildDt.minute()), unsigned(buildDt.second()));
+        }
+    } else {
+        cachedTime = DateTime(F(__DATE__), F(__TIME__));
+        online = false;
+        DebugLog::log("RTC not detected on I2C; using build time fallback");
     }
-    if (SET_FROM_BUILD || rtc.lostPower() || !valid(rtc.now())) {
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-        adjusted = true;
-        DebugLog::log("RTC adjusted to build time");
-    }
-    const DateTime value = rtc.now();
-    online = valid(value);
-    if (online) anchor(value);
-    DebugLog::log("RTC init valid=%d set_at_boot=%d", online, adjusted);
+    lastReadMs = millis();
+    lastRtcPollMs = millis();
 }
 
 void WatchClock::tick() {
-    if (uint32_t(millis() - lastPoll) < 1000) return;
-    lastPoll = millis();
-    const bool wasOnline = online;
-    online = false;
-    // Probe before reading, and retry initialization if absent at boot.
-    if (responds() && (wasOnline || rtc.begin(&Wire))) {
-        const DateTime value = rtc.now();
-        const bool lostPower = rtc.lostPower();
-        online = !lostPower && valid(value);
-        DebugLog::log("RTC raw=%04u-%02u-%02u %02u:%02u:%02u valid=%d lostPower=%d",
-                      unsigned(value.year()), unsigned(value.month()), unsigned(value.day()),
-                      unsigned(value.hour()), unsigned(value.minute()), unsigned(value.second()),
-                      valid(value), lostPower);
-        if (online) anchor(value);
+    const uint32_t nowMs = millis();
+    if (nowMs - lastRtcPollMs >= 1000) {
+        lastRtcPollMs = nowMs;
+        if (responds()) {
+            const DateTime rtcVal = rtc.now();
+            if (valid(rtcVal)) {
+                cachedTime = rtcVal;
+                lastReadMs = nowMs;
+                online = true;
+            }
+        }
     }
 }
 
 DateTime WatchClock::now() {
-    // Keep ticking from the last good RTC value if I2C fails. Use a 64-bit
-    // monotonic clock, so an uptime longer than millis() wrap is safe.
-    return DateTime(epoch + uint32_t((esp_timer_get_time() - anchorUs) / 1000000));
+    const uint32_t elapsedSec = (millis() - lastReadMs) / 1000;
+    return DateTime(cachedTime.unixtime() + elapsedSec);
 }
+
 bool WatchClock::healthy() { return online; }
 bool WatchClock::setAtBoot() { return adjusted; }
 
 void WatchClock::adjust(const DateTime& time) {
     if (!valid(time)) return;
-    anchor(time);
+    cachedTime = time;
+    lastReadMs = millis();
+    lastRtcPollMs = millis();
     if (responds()) {
         rtc.adjust(time);
         online = true;
@@ -85,7 +92,7 @@ void WatchClock::adjust(const DateTime& time) {
                       unsigned(time.year()), unsigned(time.month()), unsigned(time.day()),
                       unsigned(time.hour()), unsigned(time.minute()), unsigned(time.second()));
     } else {
-        DebugLog::log("RTC adjust I2C unreachable; software time anchored");
+        DebugLog::log("RTC adjust I2C unreachable; software time set");
     }
 }
 
