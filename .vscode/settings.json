@@ -1,0 +1,11 @@
+{
+    "C_Cpp.default.configurationProvider": "platformio.platformio-ide",
+    "clangd.path": "/home/ersa/.espressif/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=**",
+        "--compile-commands-dir=/home/ersa/Dev/Ersa-W1/build"
+    ],
+    "platformio-ide.useBuiltinPIOCore": false,
+    "platformio-ide.customPATH": "/home/ersa/Dev/Ersa-W1/.tools/platformio/bin:/usr/local/bin:/usr/bin:/bin"
+}

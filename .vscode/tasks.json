@@ -1,0 +1,33 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Watch: Build",
+            "type": "process",
+            "command": "bash",
+            "args": ["${workspaceFolder}/scripts/pio.sh", "run"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": ["$gcc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Watch: Upload",
+            "type": "process",
+            "command": "bash",
+            "args": ["${workspaceFolder}/scripts/pio.sh", "run", "--target", "upload"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Watch: Monitor",
+            "type": "process",
+            "command": "bash",
+            "args": ["${workspaceFolder}/scripts/pio.sh", "device", "monitor"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": []
+        }
+    ]
+}
