@@ -1,7 +1,7 @@
 #include "app_calendar.h"
 #include "core/debug_log.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold9pt7b.h>
 
 namespace AppCalendar {
 
@@ -77,12 +77,14 @@ bool onButton(Buttons::Event event, const DateTime& now) {
         syncWithTime(now);
     }
 
-    if (event == Buttons::Event::Action) {
+    if (event == Buttons::Event::Next) {
+        // B1 = SCROLL to next month
         nextMonth();
         userInteracted = true;
         DebugLog::log("CAL next month: %04u-%02u", unsigned(viewYear), unsigned(viewMonth));
         return true;
-    } else if (event == Buttons::Event::ActionAlt || event == Buttons::Event::ActionLong) {
+    } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
+        // B2 = OK: Reset to current month (Today)
         resetToCurrentMonth(now);
         return true;
     }
@@ -101,10 +103,10 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     if (viewYear < 2000) viewYear = 2000;
     if (viewYear > 2099) viewYear = 2099;
 
-    // Title: Month & Year (e.g. "SEPTEMBER 2026")
+    // Title: Month & Year (e.g. "SEPTEMBER 2026") in MiSans
     char title[32];
     snprintf(title, sizeof(title), "%s %u", monthNames[viewMonth - 1], unsigned(viewYear));
-    drawCentered(display, title, 18, &FreeSansBold9pt7b);
+    drawCentered(display, title, 18, &MiSansLatin_Bold10pt7b);
 
     // Weekday Headers (SU, MO, TU, WE, TH, FR, SA)
     display.setFont(nullptr);

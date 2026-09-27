@@ -1,7 +1,7 @@
 #include "app_drawer.h"
 #include "core/debug_log.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold9pt7b.h>
 
 namespace AppDrawer {
 
@@ -57,17 +57,14 @@ void setSelected(Item item) {
 }
 
 void render(Adafruit_GFX& display) {
-    // Top Title
-    drawCentered(display, "APP DRAWER", 16, &FreeSansBold9pt7b);
-
-    // Divider line
-    display.drawFastHLine(10, 26, 180, 0);
+    // Clean Header with MiSans, NO cutting divider lines
+    drawCentered(display, "APPS", 20, &MiSansLatin_Bold10pt7b);
 
     display.setFont(nullptr);
     display.setTextSize(1);
 
-    // List of apps
-    constexpr int16_t startY = 32;
+    // List of apps (6 items)
+    constexpr int16_t startY = 34;
     constexpr int16_t rowHeight = 21;
 
     for (uint8_t i = 0; i < static_cast<uint8_t>(Item::Count); ++i) {
@@ -75,25 +72,25 @@ void render(Adafruit_GFX& display) {
         const bool isSelected = (i == static_cast<uint8_t>(currentSelection));
 
         if (isSelected) {
-            display.fillRoundRect(10, itemY, 180, 19, 4, 0);
+            display.fillRoundRect(12, itemY - 2, 176, 19, 4, 0);
             display.setTextColor(1); // White
-            display.setCursor(18, itemY + 6);
+            display.setCursor(20, itemY + 6);
             display.print("-> ");
             display.print(labels[i]);
             display.setTextColor(0); // Reset Black
         } else {
             display.setTextColor(0);
-            display.setCursor(24, itemY + 6);
+            display.setCursor(26, itemY + 6);
             display.print(labels[i]);
         }
     }
 
-    // Bottom Divider
-    display.drawFastHLine(10, 162, 180, 0);
+    // Single Bottom Divider
+    display.drawFastHLine(14, 166, 172, 0);
 
-    // Footer instruction
-    drawCentered(display, "B1: NEXT   B2: OPEN", 173);
-    drawCentered(display, "Hold B1: Watchface", 187);
+    // Footer instructions
+    drawCentered(display, "B1: SCROLL   B2: OK", 176);
+    drawCentered(display, "Hold B1: Watchface", 188);
 }
 
 } // namespace AppDrawer

@@ -1,8 +1,8 @@
 #include "app_todo.h"
 #include "core/net_sync.h"
 #include "core/debug_log.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold9pt7b.h>
 
 namespace AppTodo {
 
@@ -37,11 +37,8 @@ bool onButton(Buttons::Event event) {
         return false;
     }
 
-    if (event == Buttons::Event::Action) {
-        // Toggle the selected task
-        NetSync::toggleTodo(selectedIndex);
-
-        // Move to the next task
+    if (event == Buttons::Event::Next) {
+        // B1 = SCROLL down through tasks
         selectedIndex = (selectedIndex + 1) % total;
         if (selectedIndex >= topVisibleIndex + VISIBLE_ITEMS) {
             topVisibleIndex = selectedIndex - VISIBLE_ITEMS + 1;
@@ -49,8 +46,12 @@ bool onButton(Buttons::Event event) {
             topVisibleIndex = selectedIndex;
         }
         return true;
+    } else if (event == Buttons::Event::Action) {
+        // B2 = OK: Toggle the selected task
+        NetSync::toggleTodo(selectedIndex);
+        return true;
     } else if (event == Buttons::Event::ActionLong) {
-        // Trigger CalDAV & NTP sync
+        // B2 Hold: CalDAV sync
         NetSync::syncAll();
         return true;
     }
@@ -58,7 +59,7 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display) {
-    drawCentered(display, "CALDAV TASKS", 16, &FreeSansBold9pt7b);
+    drawCentered(display, "CALDAV TASKS", 18, &MiSansLatin_Bold10pt7b);
 
     display.setFont(nullptr);
     display.setTextSize(1);

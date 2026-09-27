@@ -1,8 +1,8 @@
 #include "app_agenda.h"
 #include "core/net_sync.h"
 #include "core/debug_log.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold9pt7b.h>
 
 namespace AppAgenda {
 
@@ -26,19 +26,15 @@ void begin() {
 
 bool onButton(Buttons::Event event) {
     const size_t total = NetSync::eventCount();
-    if (event == Buttons::Event::Action) {
-        if (total > 2 && (pageOffset + 2) < total) {
-            pageOffset += 2;
-            return true;
-        } else if (total > 2 && (pageOffset + 2) >= total) {
-            pageOffset = 0;
-            return true;
-        } else {
-            // When few events or default card, B2 triggers direct CalDAV sync
-            NetSync::syncAll();
+    if (event == Buttons::Event::Next) {
+        // B1 = SCROLL through event cards
+        if (total > 2) {
+            pageOffset = (pageOffset + 2 < total) ? (pageOffset + 2) : 0;
             return true;
         }
-    } else if (event == Buttons::Event::ActionLong) {
+        return false;
+    } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
+        // B2 = OK / ACTION: Trigger CalDAV sync
         NetSync::syncAll();
         return true;
     }
@@ -46,15 +42,15 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display, const DateTime& now) {
-    drawCentered(display, "TODAY'S EVENTS", 16, &FreeSansBold9pt7b);
+    drawCentered(display, "CALDAV AGENDA", 18, &MiSansLatin_Bold10pt7b);
 
     display.setFont(nullptr);
     display.setTextSize(1);
     display.setTextColor(0); // Black
 
     char dateBuf[32];
-    snprintf(dateBuf, sizeof(dateBuf), "%02u/%02u/%04u (%s)",
-             unsigned(now.day()), unsigned(now.month()), unsigned(now.year()),
+    snprintf(dateBuf, sizeof(dateBuf), "%02u/%02u (%s)",
+             unsigned(now.day()), unsigned(now.month()),
              NetSync::lastStatus());
     drawCentered(display, dateBuf, 30);
 
@@ -63,9 +59,9 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     const size_t total = NetSync::eventCount();
 
     if (total == 0) {
-        display.drawRoundRect(14, 52, 172, 60, 4, 0);
-        drawCentered(display, "No events today", 74);
-        drawCentered(display, "Press B2 to sync", 92);
+        display.drawRoundRect(14, 56, 172, 56, 4, 0);
+        drawCentered(display, "No events found", 76);
+        drawCentered(display, "Press B2 to Sync", 94);
         return;
     }
 

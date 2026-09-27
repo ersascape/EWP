@@ -86,20 +86,20 @@ void render() {
 
         // Draw unified footer on app screens (excluding Clock and Drawer)
         if (screen != Clock && screen != Drawer) {
-            display.drawFastHLine(10, 166, 180, GxEPD_BLACK);
+            display.drawFastHLine(14, 166, 172, GxEPD_BLACK);
             if (screen == Calendar) {
-                centered("B1: BACK   B2: +1MO", 175);
+                centered("B1: +1MO   B2: TODAY", 175);
             } else if (screen == Agenda) {
-                centered("B1: BACK   B2: SYNC CALDAV", 175);
+                centered("B1: SCROLL   B2: SYNC", 175);
             } else if (screen == Todo) {
-                centered("B1: BACK   B2: TOGGLE [X]", 175);
+                centered("B1: SCROLL   B2: TOGGLE [X]", 175);
             } else if (screen == Hotspot) {
-                if (AppPortal::isActive()) centered("B1: BACK   B2: STOP AP", 175);
-                else centered("B1: BACK   B2: START AP", 175);
+                if (AppPortal::isActive()) centered("B1: REFRESH   B2: STOP AP", 175);
+                else centered("B1: REFRESH   B2: START AP", 175);
             } else if (screen == Status) {
-                centered("B1: BACK   B2: SYNC NTP", 175);
+                centered("B1: REFRESH   B2: SYNC NTP", 175);
             }
-            centered("Hold B1: Watchface", 188);
+            centered("Hold B1: MENU", 188);
         }
     } while (display.nextPage());
 
@@ -136,9 +136,13 @@ void WatchUi::onButton(Buttons::Event event) {
     const Screen before = screen;
     const DateTime time = WatchClock::now();
 
-    // Universal Home shortcut: Long press B1 from anywhere returns to Watchface
+    // Universal navigation: Hold B1 from ANY app exits back to App Drawer (or from Drawer to Clock)
     if (event == Buttons::Event::Home) {
-        screen = Clock;
+        if (screen == Drawer || screen == Clock) {
+            screen = Clock;
+        } else {
+            screen = Drawer;
+        }
     } else if (screen == Clock) {
         if (event == Buttons::Event::Next || event == Buttons::Event::ActionLong) {
             screen = Drawer;
@@ -169,38 +173,15 @@ void WatchUi::onButton(Buttons::Event event) {
             }
         }
     } else if (screen == Calendar) {
-        if (event == Buttons::Event::Next) {
-            screen = Drawer;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
-                   event == Buttons::Event::ActionLong) {
-            if (AppCalendar::onButton(event, time)) dirty = true;
-        }
+        if (AppCalendar::onButton(event, time)) dirty = true;
     } else if (screen == Agenda) {
-        if (event == Buttons::Event::Next) {
-            screen = Drawer;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
-            if (AppAgenda::onButton(event)) dirty = true;
-        }
+        if (AppAgenda::onButton(event)) dirty = true;
     } else if (screen == Todo) {
-        if (event == Buttons::Event::Next) {
-            screen = Drawer;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
-                   event == Buttons::Event::ActionLong) {
-            if (AppTodo::onButton(event)) dirty = true;
-        }
+        if (AppTodo::onButton(event)) dirty = true;
     } else if (screen == Hotspot) {
-        if (event == Buttons::Event::Next) {
-            screen = Drawer;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
-            if (AppPortal::onButton(event)) dirty = true;
-        }
+        if (AppPortal::onButton(event)) dirty = true;
     } else if (screen == Status) {
-        if (event == Buttons::Event::Next) {
-            screen = Drawer;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
-                   event == Buttons::Event::ActionLong) {
-            if (AppStatus::onButton(event)) dirty = true;
-        }
+        if (AppStatus::onButton(event)) dirty = true;
     }
 
     if (before != screen) dirty = true;

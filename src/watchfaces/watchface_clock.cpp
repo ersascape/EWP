@@ -4,10 +4,8 @@
 #include "core/watch_config.h"
 #include "core/battery.h"
 #include "core/net_sync.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold24pt7b.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <ctype.h>
 
 namespace WatchfaceClock {
 
@@ -16,9 +14,19 @@ const char* const weekdaysShort[] = {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
 };
 
+const char* const weekdaysFull[] = {
+    "Sunday", "Monday", "Tuesday", "Wednesday",
+    "Thursday", "Friday", "Saturday"
+};
+
 const char* const monthsShort[] = {
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+};
+
+const char* const monthsFull[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
 };
 
 void drawCenteredText(Adafruit_GFX& display, const char* text, int16_t cx, int16_t cy, const GFXfont* font = nullptr) {
@@ -82,10 +90,10 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     display.print(battStr);
     display.drawBitmap(166, 8, Battery::iconBitmap(), 24, 16, 0);
 
-    // Header divider line (10px margins on both sides: 10 to 190)
-    display.drawFastHLine(10, 30, 180, 0);
+    // Header divider line (14px margins on both sides: 14 to 186)
+    display.drawFastHLine(14, 28, 172, 0);
 
-    // 2. HERO TIME: Large bold FreeSansBold24pt7b, perfectly centered at X = 100
+    // 2. HERO TIME: Beautiful Redmi / Xiaomi MiSans Bold font, centered at X = 100
     char timeBuf[16];
     if (cfg.militaryTime) {
         snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u",
@@ -96,20 +104,20 @@ void render(Adafruit_GFX& display, const DateTime& time) {
         snprintf(timeBuf, sizeof(timeBuf), "%u:%02u", h, unsigned(time.minute()));
     }
 
-    display.setFont(&FreeSansBold24pt7b);
+    display.setFont(&MiSansLatin_Bold28pt7b);
     display.setTextSize(1);
     int16_t tx1, ty1;
     uint16_t tw, th;
     display.getTextBounds(timeBuf, 0, 0, &tx1, &ty1, &tw, &th);
     const int16_t curX = 100 - int16_t(tw / 2) - tx1;
-    const int16_t curY = 74 - int16_t(th / 2) - ty1;
+    const int16_t curY = 68 - int16_t(th / 2) - ty1;
     display.setCursor(curX, curY);
     display.print(timeBuf);
 
     // Day progress gauge (Centered: 24 to 176, width 152)
     const uint16_t minuteOfDay = time.hour() * 60 + time.minute();
     constexpr int16_t barX = 24;
-    constexpr int16_t barY = 98;
+    constexpr int16_t barY = 96;
     constexpr int16_t barW = 152;
     constexpr int16_t barH = 5;
     const int16_t fillW = (minuteOfDay * barW) / 1440;
@@ -119,26 +127,20 @@ void render(Adafruit_GFX& display, const DateTime& time) {
         display.fillRoundRect(barX, barY, max((int16_t)3, fillW), barH, 2, 0);
     }
 
-    // Mid divider line (Centered: 10 to 190)
-    display.drawFastHLine(10, 114, 180, 0);
+    // Mid divider line (Centered: 14 to 186)
+    display.drawFastHLine(14, 110, 172, 0);
 
-    // 3. BOTTOM INFO: Calendar Name, Event / Task glance, and Footer
-    char calTitle[32] = "MURENA TEAM";
-    if (cfg.caldavCalendar[0] != '\0') {
-        strncpy(calTitle, cfg.caldavCalendar, sizeof(calTitle) - 1);
-        calTitle[sizeof(calTitle) - 1] = '\0';
-        for (char* p = calTitle; *p; ++p) {
-            if (*p == '-' || *p == '_') *p = ' ';
-            else *p = toupper((unsigned char)*p);
-        }
-    }
-    drawCenteredText(display, calTitle, 100, 130, &FreeSansBold9pt7b);
+    // 3. BOTTOM INFO: Full Day & Date (e.g. "Monday, September 28") using MiSans Bold 10pt
+    char fullDateBuf[36];
+    snprintf(fullDateBuf, sizeof(fullDateBuf), "%s, %s %u",
+             weekdaysFull[dow], monthsFull[mon], unsigned(time.day()));
+    drawCenteredText(display, fullDateBuf, 100, 126, &MiSansLatin_Bold10pt7b);
 
     // Event or task glance summary
     display.setFont(nullptr);
     display.setTextSize(1);
 
-    char glanceBuf[36] = "";
+    char glanceBuf[40] = "";
     const size_t totalEvents = NetSync::eventCount();
     const size_t totalTodos = NetSync::todoCount();
 
@@ -159,10 +161,10 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     } else {
         snprintf(glanceBuf, sizeof(glanceBuf), "CalDAV: %s", NetSync::lastStatus());
     }
-    drawCenteredText(display, glanceBuf, 100, 150);
+    drawCenteredText(display, glanceBuf, 100, 148);
 
-    // Bottom divider line (Centered: 10 to 190)
-    display.drawFastHLine(10, 166, 180, 0);
+    // Bottom divider line (Centered: 14 to 186)
+    display.drawFastHLine(14, 166, 172, 0);
 
     // Symmetrical button actions footer (14px margin on both sides)
     display.setCursor(14, 178);
