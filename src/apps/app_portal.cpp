@@ -6,7 +6,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
-#include <Fonts/FreeSansBold9pt7b.h>
+#include "fonts/misans_fonts.h"
 
 namespace AppPortal {
 
@@ -253,59 +253,70 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display) {
-    drawCentered(display, "WIFI HOTSPOT", 18, &FreeSansBold9pt7b);
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-    display.setFont(nullptr);
-    display.setTextSize(1);
-    display.setTextColor(0); // Black
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("hotspot");
 
-    display.drawFastHLine(14, 42, 172, 0);
+    display.setFont(&MiSansLatin_Regular8pt7b);
 
     const auto& cfg = WatchConfig::get();
+    constexpr int16_t leftX = 18;
+    constexpr int16_t valX = 86;
+    constexpr int16_t startY = 48;
+    constexpr int16_t rowHeight = 20;
 
-    display.setCursor(14, 52);
-    display.print("Status: ");
-    if (apRunning) {
-        display.print("ACTIVE");
-    } else {
-        display.print("OFF (Standby)");
-    }
+    // Status
+    display.setCursor(leftX, startY);
+    display.print("state");
+    display.setCursor(valX, startY);
+    display.print(apRunning ? "active" : "off");
 
-    display.setCursor(14, 70);
-    display.print("AP SSID: ");
+    // SSID
+    display.setCursor(leftX, startY + rowHeight);
+    display.print("ssid");
+    display.setCursor(valX, startY + rowHeight);
     display.print(cfg.apSsid);
 
-    display.setCursor(14, 88);
-    display.print("Password: ");
+    // Password
+    display.setCursor(leftX, startY + rowHeight * 2);
+    display.print("pass");
+    display.setCursor(valX, startY + rowHeight * 2);
     display.print(cfg.apPass[0] != '\0' ? cfg.apPass : "(open)");
 
-    display.setCursor(14, 106);
-    display.print("Web IP: ");
-    if (apRunning) {
-        display.print(WiFi.softAPIP().toString().c_str());
-    } else {
-        display.print("192.168.4.1");
-    }
+    // IP
+    display.setCursor(leftX, startY + rowHeight * 3);
+    display.print("web ip");
+    display.setCursor(valX, startY + rowHeight * 3);
+    display.print(apRunning ? WiFi.softAPIP().toString().c_str() : "192.168.4.1");
 
     if (apRunning) {
         const uint32_t elapsed = (millis() - apStartTime) / 1000;
         const int32_t remain = int32_t(cfg.apTimeoutSec) - int32_t(elapsed);
-        display.setCursor(14, 126);
-        display.print("Auto-off: ");
+        display.setCursor(leftX, startY + rowHeight * 4);
+        display.print("timeout");
+        display.setCursor(valX, startY + rowHeight * 4);
         if (remain > 0) {
-            display.print(remain / 60);
-            display.print("m ");
-            display.print(remain % 60);
-            display.print("s");
+            char tBuf[16];
+            snprintf(tBuf, sizeof(tBuf), "%lum %lus", (unsigned long)(remain / 60), (unsigned long)(remain % 60));
+            display.print(tBuf);
         } else {
-            display.print("now");
+            display.print("closing");
         }
 
-        drawCentered(display, "Connect phone to AP", 146);
+        display.setCursor(leftX, 150);
+        display.print("connect phone to configure");
+
+        display.setCursor(leftX, 186);
+        display.print("stop AP B2   menu B1");
     } else {
-        display.setCursor(14, 126);
-        display.print("Press B2 to start AP");
-        drawCentered(display, "Hold B2: SYNC NTP", 146);
+        display.setCursor(leftX, 150);
+        display.print("open AP to configure Wi-Fi");
+
+        display.setCursor(leftX, 186);
+        display.print("start AP B2   menu B1");
     }
 }
 

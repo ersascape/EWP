@@ -9,13 +9,13 @@ namespace AppAgenda {
 namespace {
 size_t pageOffset = 0;
 
-void drawCentered(Adafruit_GFX& display, const char* text, int16_t y, const GFXfont* font = nullptr) {
+void drawRight(Adafruit_GFX& display, const char* text, int16_t rightX, int16_t y, const GFXfont* font) {
     display.setFont(font);
     display.setTextSize(1);
     int16_t x1, y1;
     uint16_t w, h;
     display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - int16_t(w)) / 2 - x1, y - y1);
+    display.setCursor(rightX - int16_t(w) - x1, y);
     display.print(text);
 }
 } // namespace
@@ -42,68 +42,76 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display, const DateTime& now) {
-    drawCentered(display, "CALDAV AGENDA", 18, &MiSansLatin_Bold10pt7b);
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-    display.setFont(nullptr);
-    display.setTextSize(1);
-    display.setTextColor(0); // Black
-
-    char dateBuf[32];
-    snprintf(dateBuf, sizeof(dateBuf), "%02u/%02u (%s)",
-             unsigned(now.day()), unsigned(now.month()),
-             NetSync::lastStatus());
-    drawCentered(display, dateBuf, 30);
-
-    display.drawFastHLine(14, 38, 172, 0);
+    // Clean lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("agenda");
 
     const size_t total = NetSync::eventCount();
 
+    if (total > 0) {
+        char countBuf[16];
+        snprintf(countBuf, sizeof(countBuf), "%u of %u",
+                 unsigned(pageOffset + 1), unsigned(total));
+        drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
+    } else {
+        drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
+    }
+
     if (total == 0) {
-        display.drawRoundRect(14, 56, 172, 56, 4, 0);
-        drawCentered(display, "No events found", 76);
-        drawCentered(display, "Press B2 to Sync", 94);
+        display.setFont(&MiSansLatin_Regular10pt7b);
+        display.setCursor(18, 70);
+        display.print("no events today");
+
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(18, 96);
+        display.print("press B2 to sync CalDAV");
+
+        display.setCursor(18, 186);
+        display.print("sync B2   menu hold B1");
         return;
     }
 
     if (pageOffset >= total) pageOffset = 0;
 
     constexpr int16_t cardWidth = 172;
-    constexpr int16_t cardHeight = 46;
+    constexpr int16_t cardHeight = 52;
     constexpr int16_t cardX = 14;
 
     for (size_t i = 0; i < 2; ++i) {
         const size_t idx = pageOffset + i;
         if (idx >= total) break;
 
-        const int16_t cardY = 46 + i * 52;
+        const int16_t cardY = 42 + i * 58;
         const auto& ev = NetSync::getEvent(idx);
 
-        // Card border
-        display.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 4, 0);
+        // Crisp white rounded card outline
+        display.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 4, 1);
+        // Accent bar on left edge
+        display.fillRoundRect(cardX + 2, cardY + 3, 3, cardHeight - 6, 1, 1);
 
-        // Indicator bar on left
-        display.fillRoundRect(cardX + 2, cardY + 2, 4, cardHeight - 4, 2, 0);
+        // Event Time in bold
+        display.setFont(&MiSansLatin_Bold10pt7b);
+        display.setCursor(cardX + 12, cardY + 20);
+        display.print(ev.timeStr[0] != '\0' ? ev.timeStr : "all day");
 
-        char truncatedTitle[24];
-        strncpy(truncatedTitle, ev.title, sizeof(truncatedTitle) - 1);
-        truncatedTitle[sizeof(truncatedTitle) - 1] = '\0';
+        // Event Title in regular
+        char titleBuf[20];
+        strncpy(titleBuf, ev.title, sizeof(titleBuf) - 1);
+        titleBuf[sizeof(titleBuf) - 1] = '\0';
 
-        display.setCursor(cardX + 12, cardY + 10);
-        display.print(truncatedTitle);
-
-        display.setCursor(cardX + 12, cardY + 26);
-        display.print("@ ");
-        display.print(ev.timeStr);
+        display.setFont(&MiSansLatin_Regular10pt7b);
+        display.setCursor(cardX + 12, cardY + 42);
+        display.print(titleBuf);
     }
 
-    if (total > 2) {
-        char pageBuf[16];
-        snprintf(pageBuf, sizeof(pageBuf), "(%u-%u of %u)",
-                 unsigned(pageOffset + 1),
-                 unsigned(min(pageOffset + 2, total)),
-                 unsigned(total));
-        drawCentered(display, pageBuf, 154);
-    }
+    // Clean minimal footer
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print("scroll B1   sync B2");
 }
 
 } // namespace AppAgenda

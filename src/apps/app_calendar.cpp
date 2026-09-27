@@ -10,13 +10,13 @@ uint16_t viewYear = 0;
 uint8_t viewMonth = 0;
 bool userInteracted = false;
 
-const char* const monthNames[] = {
-    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"
+const char* const monthNamesLower[] = {
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december"
 };
 
-const char* const dowHeaders[] = {
-    "SU", "MO", "TU", "WE", "TH", "FR", "SA"
+const char* const dowHeadersLower[] = {
+    "s", "m", "t", "w", "t", "f", "s"
 };
 
 uint8_t daysInMonth(uint16_t year, uint8_t month) {
@@ -40,16 +40,6 @@ void prevMonth() {
         viewMonth = 12;
         if (--viewYear < 2000) viewYear = 2000;
     }
-}
-
-void drawCentered(Adafruit_GFX& display, const char* text, int16_t y, const GFXfont* font = nullptr) {
-    display.setFont(font);
-    display.setTextSize(1);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - int16_t(w)) / 2 - x1, y - y1);
-    display.print(text);
 }
 
 void syncWithTime(const DateTime& now) {
@@ -92,49 +82,45 @@ bool onButton(Buttons::Event event, const DateTime& now) {
 }
 
 void render(Adafruit_GFX& display, const DateTime& now) {
-    // Pick up real clock time dynamically from RTC / NTP
     if (!userInteracted || viewYear == 0) {
         syncWithTime(now);
     }
 
-    // Defensive clamping to prevent any memory out-of-bounds
     if (viewMonth < 1) viewMonth = 1;
     if (viewMonth > 12) viewMonth = 12;
     if (viewYear < 2000) viewYear = 2000;
     if (viewYear > 2099) viewYear = 2099;
 
-    // Title: Month & Year (e.g. "SEPTEMBER 2026") in MiSans
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
+
+    // Clean lowercase header: e.g. "september 2026"
     char title[32];
-    snprintf(title, sizeof(title), "%s %u", monthNames[viewMonth - 1], unsigned(viewYear));
-    drawCentered(display, title, 18, &MiSansLatin_Bold10pt7b);
+    snprintf(title, sizeof(title), "%s %u", monthNamesLower[viewMonth - 1], unsigned(viewYear));
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print(title);
 
-    // Weekday Headers (SU, MO, TU, WE, TH, FR, SA)
-    display.setFont(nullptr);
-    display.setTextSize(1);
-    display.setTextColor(0); // Black
-
+    // Weekday headers: s m t w t f s
+    display.setFont(&MiSansLatin_Regular8pt7b);
     constexpr int16_t startX = 16;
     constexpr int16_t colWidth = 24;
 
     for (uint8_t c = 0; c < 7; ++c) {
-        int16_t x = startX + c * colWidth + 6;
-        display.setCursor(x, 34);
-        display.print(dowHeaders[c]);
+        int16_t x = startX + c * colWidth + 8;
+        display.setCursor(x, 44);
+        display.print(dowHeadersLower[c]);
     }
 
-    // Top divider under headers
-    display.drawFastHLine(14, 46, 172, 0);
-
-    // Calculate first day of week and days in month
+    // Days matrix
     DateTime firstDay(viewYear, viewMonth, 1, 0, 0, 0);
-    const uint8_t startDow = firstDay.dayOfTheWeek(); // 0 = Sunday
+    const uint8_t startDow = firstDay.dayOfTheWeek();
     const uint8_t totalDays = daysInMonth(viewYear, viewMonth);
 
     const bool isCurrentMonth = (viewYear == now.year() && viewMonth == now.month());
     const uint8_t currentDay = now.day();
 
-    // Day numbers matrix (6 rows of 18px height)
-    constexpr int16_t startY = 50;
+    constexpr int16_t startY = 64;
     constexpr int16_t rowHeight = 18;
 
     for (uint8_t d = 1; d <= totalDays; ++d) {
@@ -144,24 +130,27 @@ void render(Adafruit_GFX& display, const DateTime& now) {
 
         const int16_t cellX = startX + col * colWidth;
         const int16_t cellY = startY + row * rowHeight;
-
         const bool isToday = (isCurrentMonth && d == currentDay);
 
         if (isToday) {
-            // Highlight today with filled rounded rectangle and white text
-            display.fillRoundRect(cellX + 1, cellY, 22, 15, 3, 0); // Black fill
-            display.setTextColor(1); // White
+            display.fillRoundRect(cellX + 2, cellY - 12, 20, 16, 3, 1);
+            display.setTextColor(0); // Black numeral on white badge
+            display.setFont(&MiSansLatin_Bold8pt7b);
         } else {
-            display.setTextColor(0); // Black
+            display.setTextColor(1);
+            display.setFont(&MiSansLatin_Regular8pt7b);
         }
 
-        const int16_t numX = (d < 10) ? (cellX + 9) : (cellX + 6);
-        display.setCursor(numX, cellY + 4);
+        const int16_t numX = (d < 10) ? (cellX + 8) : (cellX + 4);
+        display.setCursor(numX, cellY);
         display.print(d);
     }
 
-    // Reset text color
-    display.setTextColor(0);
+    // Clean footer
+    display.setTextColor(1);
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print("+1 mo B1   today B2");
 }
 
 } // namespace AppCalendar

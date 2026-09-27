@@ -11,13 +11,13 @@ size_t selectedIndex = 0;
 size_t topVisibleIndex = 0;
 constexpr size_t VISIBLE_ITEMS = 4;
 
-void drawCentered(Adafruit_GFX& display, const char* text, int16_t y, const GFXfont* font = nullptr) {
+void drawRight(Adafruit_GFX& display, const char* text, int16_t rightX, int16_t y, const GFXfont* font) {
     display.setFont(font);
     display.setTextSize(1);
     int16_t x1, y1;
     uint16_t w, h;
     display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - int16_t(w)) / 2 - x1, y - y1);
+    display.setCursor(rightX - int16_t(w) - x1, y);
     display.print(text);
 }
 } // namespace
@@ -59,32 +59,43 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display) {
-    drawCentered(display, "CALDAV TASKS", 18, &MiSansLatin_Bold10pt7b);
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-    display.setFont(nullptr);
-    display.setTextSize(1);
-    display.setTextColor(0); // Black
+    // Clean lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("tasks");
 
     const size_t total = NetSync::todoCount();
 
-    char countBuf[32];
-    snprintf(countBuf, sizeof(countBuf), "%u tasks (%s)",
-             unsigned(total), NetSync::lastStatus());
-    drawCentered(display, countBuf, 30);
-
-    display.drawFastHLine(14, 38, 172, 0);
+    if (total > 0) {
+        char countBuf[20];
+        snprintf(countBuf, sizeof(countBuf), "%u tasks", unsigned(total));
+        drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
+    } else {
+        drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
+    }
 
     if (total == 0) {
-        drawCentered(display, "No tasks cached", 76);
-        drawCentered(display, "Press B2 to sync", 96);
+        display.setFont(&MiSansLatin_Regular10pt7b);
+        display.setCursor(18, 70);
+        display.print("no tasks found");
+
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(18, 96);
+        display.print("press B2 to sync CalDAV");
+
+        display.setCursor(18, 186);
+        display.print("sync B2   menu hold B1");
         return;
     }
 
     if (selectedIndex >= total) selectedIndex = 0;
     if (topVisibleIndex >= total) topVisibleIndex = 0;
 
-    constexpr int16_t startY = 46;
-    constexpr int16_t rowHeight = 24;
+    constexpr int16_t startY = 50;
+    constexpr int16_t rowHeight = 26;
 
     for (size_t i = 0; i < VISIBLE_ITEMS; ++i) {
         const size_t idx = topVisibleIndex + i;
@@ -94,35 +105,45 @@ void render(Adafruit_GFX& display) {
         const auto& item = NetSync::getTodo(idx);
         const bool isSelected = (idx == selectedIndex);
 
-        if (isSelected) {
-            display.drawRoundRect(14, rowY - 2, 172, 22, 3, 0);
-        }
-
-        // Checkbox: [ ] or [X]
-        display.setCursor(20, rowY + 3);
-        if (item.completed) {
-            display.print("[X] ");
-        } else {
-            display.print("[ ] ");
-        }
-
-        char truncated[24];
+        char truncated[22];
         strncpy(truncated, item.title, sizeof(truncated) - 1);
         truncated[sizeof(truncated) - 1] = '\0';
-        display.print(truncated);
+
+        char lineBuf[28];
+        snprintf(lineBuf, sizeof(lineBuf), "%s %s",
+                 item.completed ? "[x]" : "[ ]",
+                 truncated);
+
+        if (isSelected) {
+            display.fillRoundRect(14, rowY - 17, 168, 22, 4, 1);
+            display.setTextColor(0); // Black text on white capsule
+            display.setFont(&MiSansLatin_Bold8pt7b);
+            display.setCursor(20, rowY - 1);
+            display.print(lineBuf);
+            display.setTextColor(1); // Reset White
+        } else {
+            display.setFont(&MiSansLatin_Regular8pt7b);
+            display.setCursor(20, rowY - 1);
+            display.print(lineBuf);
+        }
     }
 
-    // Scrollbar indicator
+    // Clean slender scroll indicator on right edge
     if (total > VISIBLE_ITEMS) {
-        constexpr int16_t barX = 190;
+        constexpr int16_t barX = 188;
         constexpr int16_t barY = 46;
-        constexpr int16_t barH = 92;
-        display.drawFastVLine(barX, barY, barH, 0);
+        constexpr int16_t barH = 104;
+        display.drawFastVLine(barX, barY, barH, 1);
 
-        const int16_t thumbH = max(8, int((VISIBLE_ITEMS * barH) / total));
+        const int16_t thumbH = max(10, int((VISIBLE_ITEMS * barH) / total));
         const int16_t thumbY = barY + int((topVisibleIndex * (barH - thumbH)) / (total - VISIBLE_ITEMS));
-        display.fillRect(barX - 1, thumbY, 3, thumbH, 0);
+        display.fillRect(barX - 1, thumbY, 3, thumbH, 1);
     }
+
+    // Clean minimal footer
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print("scroll B1   toggle B2");
 }
 
 } // namespace AppTodo

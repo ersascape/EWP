@@ -63,8 +63,8 @@ void render() {
 
     display.firstPage();
     do {
-        display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
+        display.fillScreen(GxEPD_BLACK);
+        display.setTextColor(GxEPD_WHITE);
         display.setTextWrap(false);
 
         // Delegate rendering to modular screen components
@@ -82,24 +82,6 @@ void render() {
             AppPortal::render(display);
         } else if (screen == Status) {
             AppStatus::render(display);
-        }
-
-        // Draw unified footer on app screens (excluding Clock and Drawer)
-        if (screen != Clock && screen != Drawer) {
-            display.drawFastHLine(14, 166, 172, GxEPD_BLACK);
-            if (screen == Calendar) {
-                centered("B1: +1MO   B2: TODAY", 175);
-            } else if (screen == Agenda) {
-                centered("B1: SCROLL   B2: SYNC", 175);
-            } else if (screen == Todo) {
-                centered("B1: SCROLL   B2: TOGGLE [X]", 175);
-            } else if (screen == Hotspot) {
-                if (AppPortal::isActive()) centered("B1: REFRESH   B2: STOP AP", 175);
-                else centered("B1: REFRESH   B2: START AP", 175);
-            } else if (screen == Status) {
-                centered("B1: REFRESH   B2: SYNC NTP", 175);
-            }
-            centered("Hold B1: MENU", 188);
         }
     } while (display.nextPage());
 

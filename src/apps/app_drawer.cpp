@@ -9,23 +9,14 @@ namespace {
 Item currentSelection = Item::Calendar;
 
 const char* const labels[static_cast<size_t>(Item::Count)] = {
-    "Watchface",
-    "Calendar",
-    "CalDAV Agenda",
-    "CalDAV Tasks",
-    "Wi-Fi Hotspot",
-    "Status & Sync"
+    "clock",
+    "calendar",
+    "agenda",
+    "tasks",
+    "hotspot",
+    "status"
 };
 
-void drawCentered(Adafruit_GFX& display, const char* text, int16_t y, const GFXfont* font = nullptr) {
-    display.setFont(font);
-    display.setTextSize(1);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - int16_t(w)) / 2 - x1, y - y1);
-    display.print(text);
-}
 } // namespace
 
 void begin() {
@@ -57,14 +48,15 @@ void setSelected(Item item) {
 }
 
 void render(Adafruit_GFX& display) {
-    // Clean Header with MiSans, NO cutting divider lines
-    drawCentered(display, "APPS", 20, &MiSansLatin_Bold10pt7b);
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-    display.setFont(nullptr);
-    display.setTextSize(1);
+    // Clean left-aligned lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("apps");
 
-    // List of apps (6 items)
-    constexpr int16_t startY = 34;
+    constexpr int16_t startY = 46;
     constexpr int16_t rowHeight = 21;
 
     for (uint8_t i = 0; i < static_cast<uint8_t>(Item::Count); ++i) {
@@ -72,25 +64,23 @@ void render(Adafruit_GFX& display) {
         const bool isSelected = (i == static_cast<uint8_t>(currentSelection));
 
         if (isSelected) {
-            display.fillRoundRect(12, itemY - 2, 176, 19, 4, 0);
-            display.setTextColor(1); // White
-            display.setCursor(20, itemY + 6);
-            display.print("-> ");
+            display.fillRoundRect(14, itemY - 14, 172, 19, 4, 1);
+            display.setTextColor(0); // Black text on white pill
+            display.setFont(&MiSansLatin_Bold10pt7b);
+            display.setCursor(24, itemY);
             display.print(labels[i]);
-            display.setTextColor(0); // Reset Black
+            display.setTextColor(1); // Reset White
         } else {
-            display.setTextColor(0);
-            display.setCursor(26, itemY + 6);
+            display.setFont(&MiSansLatin_Regular10pt7b);
+            display.setCursor(24, itemY);
             display.print(labels[i]);
         }
     }
 
-    // Single Bottom Divider
-    display.drawFastHLine(14, 166, 172, 0);
-
-    // Footer instructions
-    drawCentered(display, "B1: SCROLL   B2: OK", 176);
-    drawCentered(display, "Hold B1: Watchface", 188);
+    // Minimal footer without harsh dividing lines
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print("scroll B1   select B2");
 }
 
 } // namespace AppDrawer

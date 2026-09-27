@@ -3,63 +3,75 @@
 #include "core/debug_log.h"
 #include "core/battery.h"
 #include "core/net_sync.h"
+#include "fonts/misans_fonts.h"
 #include <Arduino.h>
-#include <Fonts/FreeSansBold12pt7b.h>
 
 namespace AppStatus {
 
-namespace {
-void drawCentered(Adafruit_GFX& display, const char* text, int16_t y, const GFXfont* font = nullptr) {
-    display.setFont(font);
-    display.setTextSize(1);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - int16_t(w)) / 2 - x1, y - y1);
-    display.print(text);
-}
-} // namespace
-
 void render(Adafruit_GFX& display) {
-    drawCentered(display, "STATUS", 14, &FreeSansBold12pt7b);
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-    display.setFont(nullptr);
-    display.setTextSize(1);
-    display.setTextColor(0); // Black
+    // Clean lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("status");
 
-    display.setCursor(12, 42);
-    display.print("RTC: ");
-    display.print(WatchClock::healthy() ? "online" : "offline / invalid");
+    display.setFont(&MiSansLatin_Regular8pt7b);
 
-    display.setCursor(12, 60);
-    display.print("Battery: ");
+    constexpr int16_t leftX = 18;
+    constexpr int16_t valX = 86;
+    constexpr int16_t startY = 48;
+    constexpr int16_t rowHeight = 20;
+
+    // 1. RTC
+    display.setCursor(leftX, startY);
+    display.print("rtc");
+    display.setCursor(valX, startY);
+    display.print(WatchClock::healthy() ? "online" : "offline");
+
+    // 2. Battery
+    display.setCursor(leftX, startY + rowHeight);
+    display.print("battery");
+    display.setCursor(valX, startY + rowHeight);
     if (Battery::isConnected()) {
-        display.print(Battery::percentage());
-        display.print("% (");
-        display.print(Battery::millivolts());
-        display.print(" mV)");
+        char battBuf[20];
+        snprintf(battBuf, sizeof(battBuf), "%u%% (%u mV)",
+                 Battery::percentage(), Battery::millivolts());
+        display.print(battBuf);
     } else {
         display.print("USB power");
     }
 
-    display.setCursor(12, 78);
-    display.print("Reset: ");
+    // 3. Reset
+    display.setCursor(leftX, startY + rowHeight * 2);
+    display.print("reset");
+    display.setCursor(valX, startY + rowHeight * 2);
     display.print(DebugLog::resetReasonName());
 
-    display.setCursor(12, 96);
-    display.print("Boot count: ");
+    // 4. Boot
+    display.setCursor(leftX, startY + rowHeight * 3);
+    display.print("boot");
+    display.setCursor(valX, startY + rowHeight * 3);
     display.print(DebugLog::bootCount());
 
-    display.setCursor(12, 114);
-    display.print("Free heap: ");
-    display.print(ESP.getFreeHeap() / 1024);
-    display.print(" KB");
+    // 5. Heap
+    display.setCursor(leftX, startY + rowHeight * 4);
+    display.print("heap");
+    display.setCursor(valX, startY + rowHeight * 4);
+    char heapBuf[16];
+    snprintf(heapBuf, sizeof(heapBuf), "%u KB", unsigned(ESP.getFreeHeap() / 1024));
+    display.print(heapBuf);
 
-    display.setCursor(12, 132);
-    display.print("Net Sync: ");
+    // 6. Net Sync
+    display.setCursor(leftX, startY + rowHeight * 5);
+    display.print("sync");
+    display.setCursor(valX, startY + rowHeight * 5);
     display.print(NetSync::lastStatus());
 
-    drawCentered(display, "B2: SYNC NTP   Hold B1: CLOCK", 152);
+    // Clean footer
+    display.setCursor(leftX, 186);
+    display.print("sync B2   menu B1");
 }
 
 bool onButton(Buttons::Event event) {
