@@ -112,6 +112,131 @@ void disconnectWiFi() {
     WiFi.mode(WIFI_OFF);
     DebugLog::log("NET: WiFi turned off (power save)");
 }
+
+String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, bool encodeAt = false) {
+    String s = String(cfg.caldavServer);
+    s.trim();
+    if (s.isEmpty()) return "";
+
+    if (s.indexOf("?export") != -1) {
+        return s;
+    }
+
+    while (s.endsWith("/")) s.remove(s.length() - 1);
+
+    if (s.indexOf("/calendars/") != -1) {
+        return s + "?export";
+    }
+
+    if (s.indexOf("/remote.php/dav") == -1) {
+        s += "/remote.php/dav";
+    }
+
+    if (cfg.caldavUser[0] != '\0') {
+        s += "/calendars/";
+        String u = String(cfg.caldavUser);
+        if (encodeAt) u.replace("@", "%40");
+        s += u;
+        s += "/";
+        s += (calendarName && calendarName[0] != '\0') ? calendarName : "personal";
+        s += "?export";
+    }
+
+    return s;
+}
+
+bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String& url,
+                      const WatchConfig::Config& cfg,
+                      size_t& outEvents, size_t& outTodos) {
+    if (url.isEmpty()) return false;
+    DebugLog::log("NET: Fetching ICS from: %s", url.c_str());
+
+    if (!https.begin(client, url)) {
+        DebugLog::log("NET: HTTPClient begin failed");
+        return false;
+    }
+
+    https.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    if (cfg.caldavUser[0] != '\0' && cfg.caldavPass[0] != '\0') {
+        https.setAuthorization(cfg.caldavUser, cfg.caldavPass);
+    }
+    https.setTimeout(8000);
+
+    const int code = https.GET();
+    DebugLog::log("NET: ICS GET code=%d", code);
+
+    if (code != 200) {
+        https.end();
+        return false;
+    }
+
+    WiFiClient* stream = https.getStreamPtr();
+    bool inEvent = false;
+    bool inTodo = false;
+    char curSummary[48] = "";
+    char curDt[24] = "";
+    bool isCompleted = false;
+
+    while (https.connected() && stream->available()) {
+        String line = stream->readStringUntil('\n');
+        line.trim();
+
+        if (line == "BEGIN:VEVENT") {
+            inEvent = true;
+            inTodo = false;
+            curSummary[0] = '\0';
+            curDt[0] = '\0';
+        } else if (line == "BEGIN:VTODO") {
+            inTodo = true;
+            inEvent = false;
+            curSummary[0] = '\0';
+            isCompleted = false;
+        } else if (line.startsWith("SUMMARY")) {
+            int colon = line.indexOf(':');
+            if (colon != -1) {
+                safeCopy(curSummary, line.substring(colon + 1).c_str(), sizeof(curSummary));
+            }
+        } else if (inEvent && line.startsWith("DTSTART")) {
+            int colon = line.indexOf(':');
+            if (colon != -1) {
+                safeCopy(curDt, line.substring(colon + 1).c_str(), sizeof(curDt));
+            }
+        } else if (inTodo && (line.indexOf("STATUS:COMPLETED") != -1 || line.startsWith("COMPLETED:"))) {
+            isCompleted = true;
+        } else if (line == "END:VEVENT") {
+            if (inEvent && curSummary[0] != '\0' && outEvents < MAX_EVENTS) {
+                safeCopy(events[outEvents].title, curSummary, sizeof(events[0].title));
+                if (strlen(curDt) >= 13) {
+                    snprintf(events[outEvents].timeStr, sizeof(events[0].timeStr),
+                             "%.2s:%.2s", curDt + 9, curDt + 11);
+                } else {
+                    safeCopy(events[outEvents].timeStr, "Today", sizeof(events[0].timeStr));
+                }
+                DebugLog::log("NET: Event [%u] '%s' @ %s",
+                              unsigned(outEvents), events[outEvents].title, events[outEvents].timeStr);
+                ++outEvents;
+            }
+            inEvent = false;
+            curSummary[0] = '\0';
+            curDt[0] = '\0';
+        } else if (line == "END:VTODO") {
+            if (inTodo && curSummary[0] != '\0' && outTodos < MAX_TODOS) {
+                safeCopy(todos[outTodos].title, curSummary, sizeof(todos[0].title));
+                todos[outTodos].completed = isCompleted;
+                DebugLog::log("NET: Todo [%u] '%s' (%s)",
+                              unsigned(outTodos), todos[outTodos].title,
+                              isCompleted ? "DONE" : "OPEN");
+                ++outTodos;
+            }
+            inTodo = false;
+            curSummary[0] = '\0';
+            isCompleted = false;
+        }
+    }
+
+    https.end();
+    return true;
+}
 } // namespace
 
 void begin() {
@@ -204,79 +329,45 @@ bool syncAll() {
     // 2. Sync CalDAV (if server URL configured)
     if (cfg.caldavServer[0] != '\0') {
         safeCopy(statusMsg, "Querying CalDAV...", sizeof(statusMsg));
-        DebugLog::log("NET: Querying CalDAV server: %s", cfg.caldavServer);
+        DebugLog::log("NET: Querying CalDAV (srv='%s', user='%s', cal='%s', todo='%s')",
+                      cfg.caldavServer, cfg.caldavUser, cfg.caldavCalendar, cfg.caldavTodoPath);
 
         WiFiClientSecure client;
         client.setInsecure(); // Skip TLS cert validation to save flash/RAM
         HTTPClient https;
 
-        // Try downloading user calendar/tasks endpoint
-        String url = String(cfg.caldavServer);
-        if (!url.endsWith("/")) url += "/";
+        size_t parsedEvents = 0;
+        size_t parsedTodos = 0;
 
-        if (https.begin(client, url)) {
-            if (cfg.caldavUser[0] != '\0' && cfg.caldavPass[0] != '\0') {
-                https.setAuthorization(cfg.caldavUser, cfg.caldavPass);
+        // Step A: Fetch events calendar
+        String eventsUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, false);
+        bool ok = fetchAndParseIcs(client, https, eventsUrl, cfg, parsedEvents, parsedTodos);
+        if (!ok && eventsUrl.indexOf("@") != -1) {
+            String retryUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, true);
+            ok = fetchAndParseIcs(client, https, retryUrl, cfg, parsedEvents, parsedTodos);
+        }
+
+        // Step B: Fetch tasks calendar if different from events calendar
+        if (cfg.caldavTodoPath[0] != '\0' && strcmp(cfg.caldavCalendar, cfg.caldavTodoPath) != 0) {
+            String tasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, false);
+            bool ok2 = fetchAndParseIcs(client, https, tasksUrl, cfg, parsedEvents, parsedTodos);
+            if (!ok2 && tasksUrl.indexOf("@") != -1) {
+                String retryTasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, true);
+                fetchAndParseIcs(client, https, retryTasksUrl, cfg, parsedEvents, parsedTodos);
             }
-            https.setTimeout(6000);
-            int code = https.GET();
-            DebugLog::log("NET: CalDAV GET code=%d", code);
+        }
 
-            if (code == 200) {
-                // Streaming parse VEVENT / VTODO lines
-                WiFiClient* stream = https.getStreamPtr();
-                size_t parsedEvents = 0;
-                size_t parsedTodos = 0;
-                char currentSummary[36] = "";
-                char currentDt[24] = "";
-                bool isCompleted = false;
-
-                while (https.connected() && stream->available()) {
-                    String line = stream->readStringUntil('\n');
-                    line.trim();
-
-                    if (line.startsWith("SUMMARY:")) {
-                        safeCopy(currentSummary, line.substring(8).c_str(), sizeof(currentSummary));
-                    } else if (line.startsWith("DTSTART")) {
-                        int colon = line.indexOf(':');
-                        if (colon != -1) {
-                            safeCopy(currentDt, line.substring(colon + 1).c_str(), sizeof(currentDt));
-                        }
-                    } else if (line.indexOf("STATUS:COMPLETED") != -1) {
-                        isCompleted = true;
-                    } else if (line == "END:VEVENT") {
-                        if (parsedEvents < MAX_EVENTS && currentSummary[0] != '\0') {
-                            safeCopy(events[parsedEvents].title, currentSummary, sizeof(events[0].title));
-                            // Format readable time or default
-                            if (strlen(currentDt) >= 13) {
-                                snprintf(events[parsedEvents].timeStr, sizeof(events[0].timeStr),
-                                         "%.2s:%.2s", currentDt + 9, currentDt + 11);
-                            } else {
-                                safeCopy(events[parsedEvents].timeStr, "Today", sizeof(events[0].timeStr));
-                            }
-                            ++parsedEvents;
-                        }
-                        currentSummary[0] = '\0';
-                        currentDt[0] = '\0';
-                    } else if (line == "END:VTODO") {
-                        if (parsedTodos < MAX_TODOS && currentSummary[0] != '\0') {
-                            safeCopy(todos[parsedTodos].title, currentSummary, sizeof(todos[0].title));
-                            todos[parsedTodos].completed = isCompleted;
-                            ++parsedTodos;
-                        }
-                        currentSummary[0] = '\0';
-                        isCompleted = false;
-                    }
-                }
-
-                if (parsedEvents > 0) numEvents = parsedEvents;
-                if (parsedTodos > 0) numTodos = parsedTodos;
-                saveCache();
-                safeCopy(statusMsg, "CalDAV & NTP OK", sizeof(statusMsg));
-            } else {
-                safeCopy(statusMsg, "CalDAV HTTP Error", sizeof(statusMsg));
-            }
-            https.end();
+        if (parsedEvents > 0 || parsedTodos > 0) {
+            numEvents = parsedEvents;
+            numTodos = parsedTodos;
+            saveCache();
+            snprintf(statusMsg, sizeof(statusMsg), "Synced %u ev, %u todo",
+                     (unsigned)numEvents, (unsigned)numTodos);
+            DebugLog::log("NET: CalDAV sync SUCCESS: %u events, %u todos",
+                          (unsigned)numEvents, (unsigned)numTodos);
+        } else {
+            snprintf(statusMsg, sizeof(statusMsg), "CalDAV: 0 items parsed");
+            DebugLog::log("NET: CalDAV returned 0 events/todos");
         }
     } else {
         safeCopy(statusMsg, "NTP OK (No CalDAV URL)", sizeof(statusMsg));

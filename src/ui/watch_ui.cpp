@@ -5,6 +5,7 @@
 #include "core/net_sync.h"
 #include "board_pins.h"
 #include "watchfaces/watchface_clock.h"
+#include "apps/app_drawer.h"
 #include "apps/app_calendar.h"
 #include "apps/app_agenda.h"
 #include "apps/app_todo.h"
@@ -20,7 +21,7 @@ GxEPD2_BW<GxEPD2_154_GDEY0154D67, GxEPD2_154_GDEY0154D67::HEIGHT>
     display(GxEPD2_154_GDEY0154D67(Pins::EPD_CS, Pins::EPD_DC,
                                  Pins::EPD_RST, Pins::EPD_BUSY));
 
-enum Screen : uint8_t { Clock, Calendar, Agenda, Todo, Hotspot, Status, Count };
+enum Screen : uint8_t { Clock, Drawer, Calendar, Agenda, Todo, Hotspot, Status, Count };
 Screen screen = Clock;
 
 bool dirty = true, firstFrame = true, shownRtcHealthy = false;
@@ -69,6 +70,8 @@ void render() {
         // Delegate rendering to modular screen components
         if (screen == Clock) {
             WatchfaceClock::render(display, time);
+        } else if (screen == Drawer) {
+            AppDrawer::render(display);
         } else if (screen == Calendar) {
             AppCalendar::render(display, time);
         } else if (screen == Agenda) {
@@ -81,28 +84,22 @@ void render() {
             AppStatus::render(display);
         }
 
-        // Draw unified footer on non-watchface screens
-        if (screen != Clock) {
-            display.drawFastHLine(14, 168, 172, GxEPD_BLACK);
+        // Draw unified footer on app screens (excluding Clock and Drawer)
+        if (screen != Clock && screen != Drawer) {
+            display.drawFastHLine(10, 166, 180, GxEPD_BLACK);
             if (screen == Calendar) {
-                centered("B1 NEXT   B2 +1MO", 177);
+                centered("B1: BACK   B2: +1MO", 175);
             } else if (screen == Agenda) {
-                centered("B1 NEXT   B2 SYNC CALDAV", 177);
+                centered("B1: BACK   B2: SYNC CALDAV", 175);
             } else if (screen == Todo) {
-                centered("B1 NEXT   B2 TOGGLE", 177);
+                centered("B1: BACK   B2: TOGGLE [X]", 175);
             } else if (screen == Hotspot) {
-                if (AppPortal::isActive()) centered("B1 NEXT   B2 STOP AP", 177);
-                else centered("B1 NEXT   B2 START AP", 177);
+                if (AppPortal::isActive()) centered("B1: BACK   B2: STOP AP", 175);
+                else centered("B1: BACK   B2: START AP", 175);
             } else if (screen == Status) {
-                centered("B1 NEXT   B2 SYNC NTP", 177);
+                centered("B1: BACK   B2: SYNC NTP", 175);
             }
-
-            constexpr int16_t dotSpacing = 14;
-            const int16_t dotsStartX = (display.width() - (Count - 1) * dotSpacing) / 2;
-            for (uint8_t i = 0; i < Count; ++i) {
-                if (i == screen) display.fillCircle(dotsStartX + i * dotSpacing, 193, 2, GxEPD_BLACK);
-                else display.drawCircle(dotsStartX + i * dotSpacing, 193, 2, GxEPD_BLACK);
-            }
+            centered("Hold B1: Watchface", 188);
         }
     } while (display.nextPage());
 
@@ -120,6 +117,7 @@ void render() {
 } // namespace
 
 void WatchUi::begin() {
+    AppDrawer::begin();
     AppCalendar::begin();
     AppAgenda::begin();
     AppTodo::begin();
@@ -138,56 +136,69 @@ void WatchUi::onButton(Buttons::Event event) {
     const Screen before = screen;
     const DateTime time = WatchClock::now();
 
+    // Universal Home shortcut: Long press B1 from anywhere returns to Watchface
     if (event == Buttons::Event::Home) {
         screen = Clock;
     } else if (screen == Clock) {
-        if (event == Buttons::Event::Next || event == Buttons::Event::Action) {
-            screen = Calendar;
-            AppCalendar::resetToCurrentMonth(time);
-        } else if (event == Buttons::Event::Previous) {
-            screen = Status;
+        if (event == Buttons::Event::Next || event == Buttons::Event::ActionLong) {
+            screen = Drawer;
+        } else if (event == Buttons::Event::Action) {
+            // Quick sync on watchface
+            NetSync::syncAll();
+            dirty = true;
+        }
+    } else if (screen == Drawer) {
+        if (event == Buttons::Event::Next) {
+            AppDrawer::next();
+            dirty = true;
+        } else if (event == Buttons::Event::Action) {
+            const auto item = AppDrawer::selected();
+            if (item == AppDrawer::Item::Clock) {
+                screen = Clock;
+            } else if (item == AppDrawer::Item::Calendar) {
+                screen = Calendar;
+                AppCalendar::resetToCurrentMonth(time);
+            } else if (item == AppDrawer::Item::Agenda) {
+                screen = Agenda;
+            } else if (item == AppDrawer::Item::Todo) {
+                screen = Todo;
+            } else if (item == AppDrawer::Item::Hotspot) {
+                screen = Hotspot;
+            } else if (item == AppDrawer::Item::Status) {
+                screen = Status;
+            }
         }
     } else if (screen == Calendar) {
         if (event == Buttons::Event::Next) {
-            screen = Agenda;
-        } else if (event == Buttons::Event::Previous) {
-            screen = Clock;
+            screen = Drawer;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
                    event == Buttons::Event::ActionLong) {
             if (AppCalendar::onButton(event, time)) dirty = true;
         }
     } else if (screen == Agenda) {
         if (event == Buttons::Event::Next) {
-            screen = Todo;
-        } else if (event == Buttons::Event::Previous) {
-            screen = Calendar;
-            AppCalendar::resetToCurrentMonth(time);
+            screen = Drawer;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
             if (AppAgenda::onButton(event)) dirty = true;
         }
     } else if (screen == Todo) {
         if (event == Buttons::Event::Next) {
-            screen = Hotspot;
-        } else if (event == Buttons::Event::Previous) {
-            screen = Agenda;
+            screen = Drawer;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
                    event == Buttons::Event::ActionLong) {
             if (AppTodo::onButton(event)) dirty = true;
         }
     } else if (screen == Hotspot) {
         if (event == Buttons::Event::Next) {
-            screen = Status;
-        } else if (event == Buttons::Event::Previous) {
-            screen = Todo;
+            screen = Drawer;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
             if (AppPortal::onButton(event)) dirty = true;
         }
     } else if (screen == Status) {
         if (event == Buttons::Event::Next) {
-            screen = Clock;
-        } else if (event == Buttons::Event::Previous) {
-            screen = Hotspot;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt) {
+            screen = Drawer;
+        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt ||
+                   event == Buttons::Event::ActionLong) {
             if (AppStatus::onButton(event)) dirty = true;
         }
     }
