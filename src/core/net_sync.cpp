@@ -8,6 +8,7 @@
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include <time.h>
+#include <ctype.h>
 
 namespace NetSync {
 
@@ -61,21 +62,28 @@ void saveCache() {
 }
 
 void loadCache() {
+    bool hasInitializedCache = false;
     if (cachePrefs.begin(CACHE_NS, true)) {
-        numEvents = cachePrefs.getUChar("ev_cnt", 0);
-        if (numEvents > MAX_EVENTS) numEvents = 0;
-        if (numEvents > 0) {
-            cachePrefs.getBytes("events", events, sizeof(events));
-        }
+        hasInitializedCache = cachePrefs.isKey("ev_cnt");
+        if (hasInitializedCache) {
+            numEvents = cachePrefs.getUChar("ev_cnt", 0);
+            if (numEvents > MAX_EVENTS) numEvents = 0;
+            if (numEvents > 0) {
+                cachePrefs.getBytes("events", events, sizeof(events));
+            }
 
-        numTodos = cachePrefs.getUChar("td_cnt", 0);
-        if (numTodos > MAX_TODOS) numTodos = 0;
-        if (numTodos > 0) {
-            cachePrefs.getBytes("todos", todos, sizeof(todos));
+            numTodos = cachePrefs.getUChar("td_cnt", 0);
+            if (numTodos > MAX_TODOS) numTodos = 0;
+            if (numTodos > 0) {
+                cachePrefs.getBytes("todos", todos, sizeof(todos));
+            }
         }
         cachePrefs.end();
     }
-    loadDefaultsIfEmpty();
+    // Only load setup guidance if the user has never synced before
+    if (!hasInitializedCache) {
+        loadDefaultsIfEmpty();
+    }
 }
 
 bool connectWiFi(const WatchConfig::Config& cfg) {
@@ -145,6 +153,40 @@ String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, 
     return s;
 }
 
+uint32_t parseIcsDateTimeToEpoch(const char* dt, int tzOffsetMin) {
+    if (!dt || strlen(dt) < 8) return 0;
+    char yBuf[5] = {dt[0], dt[1], dt[2], dt[3], '\0'};
+    char mBuf[3] = {dt[4], dt[5], '\0'};
+    char dBuf[3] = {dt[6], dt[7], '\0'};
+    uint16_t y = atoi(yBuf);
+    uint8_t m = atoi(mBuf);
+    uint8_t d = atoi(dBuf);
+    uint8_t h = 0, min = 0, s = 0;
+    bool isUtc = false;
+
+    const char* t = strchr(dt, 'T');
+    if (t && strlen(t) >= 5) {
+        char hBuf[3] = {t[1], t[2], '\0'};
+        char minBuf[3] = {t[3], t[4], '\0'};
+        h = atoi(hBuf);
+        min = atoi(minBuf);
+        if (strlen(t) >= 7 && isdigit((unsigned char)t[5]) && isdigit((unsigned char)t[6])) {
+            char sBuf[3] = {t[5], t[6], '\0'};
+            s = atoi(sBuf);
+        }
+        if (strchr(t, 'Z')) isUtc = true;
+    }
+
+    if (y < 1970 || m < 1 || m > 12 || d < 1 || d > 31) return 0;
+
+    DateTime dtObj(y, m, d, h, min, s);
+    uint32_t epoch = dtObj.unixtime();
+    if (isUtc) {
+        epoch = static_cast<uint32_t>((int64_t)epoch + ((int64_t)tzOffsetMin * 60));
+    }
+    return epoch;
+}
+
 bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String& url,
                       const WatchConfig::Config& cfg,
                       size_t& outEvents, size_t& outTodos) {
@@ -175,7 +217,20 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     bool inTodo = false;
     char curSummary[48] = "";
     char curDt[24] = "";
+    char curDtEnd[24] = "";
+    char curRrule[48] = "";
     bool isCompleted = false;
+
+    // Buffer tasks so open/pending tasks are prioritized first
+    CalTodo openTodos[MAX_TODOS];
+    size_t numOpen = 0;
+    CalTodo doneTodos[MAX_TODOS];
+    size_t numDone = 0;
+
+    const DateTime now = WatchClock::now();
+    DateTime dayStart(now.year(), now.month(), now.day(), 0, 0, 0);
+    const uint32_t dayStartSec = dayStart.unixtime();
+    const uint32_t dayEndSec = dayStartSec + 86400;
 
     while (https.connected() && stream->available()) {
         String line = stream->readStringUntil('\n');
@@ -186,6 +241,8 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
             inTodo = false;
             curSummary[0] = '\0';
             curDt[0] = '\0';
+            curDtEnd[0] = '\0';
+            curRrule[0] = '\0';
         } else if (line == "BEGIN:VTODO") {
             inTodo = true;
             inEvent = false;
@@ -201,32 +258,79 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
             if (colon != -1) {
                 safeCopy(curDt, line.substring(colon + 1).c_str(), sizeof(curDt));
             }
+        } else if (inEvent && line.startsWith("DTEND")) {
+            int colon = line.indexOf(':');
+            if (colon != -1) {
+                safeCopy(curDtEnd, line.substring(colon + 1).c_str(), sizeof(curDtEnd));
+            }
+        } else if (inEvent && line.startsWith("RRULE:")) {
+            safeCopy(curRrule, line.c_str(), sizeof(curRrule));
         } else if (inTodo && (line.indexOf("STATUS:COMPLETED") != -1 || line.startsWith("COMPLETED:"))) {
             isCompleted = true;
         } else if (line == "END:VEVENT") {
             if (inEvent && curSummary[0] != '\0' && outEvents < MAX_EVENTS) {
-                safeCopy(events[outEvents].title, curSummary, sizeof(events[0].title));
-                if (strlen(curDt) >= 13) {
-                    snprintf(events[outEvents].timeStr, sizeof(events[0].timeStr),
-                             "%.2s:%.2s", curDt + 9, curDt + 11);
-                } else {
-                    safeCopy(events[outEvents].timeStr, "Today", sizeof(events[0].timeStr));
+                uint32_t startEpoch = parseIcsDateTimeToEpoch(curDt, cfg.timezoneOffsetMin);
+                uint32_t endEpoch = (curDtEnd[0] != '\0') ? parseIcsDateTimeToEpoch(curDtEnd, cfg.timezoneOffsetMin) : (startEpoch + 3600);
+                if (endEpoch <= startEpoch) endEpoch = startEpoch + 1800;
+
+                bool isToday = false;
+                if (startEpoch < dayEndSec && endEpoch > dayStartSec) {
+                    isToday = true;
                 }
-                DebugLog::log("NET: Event [%u] '%s' @ %s",
-                              unsigned(outEvents), events[outEvents].title, events[outEvents].timeStr);
-                ++outEvents;
+
+                // Check recurring rules (e.g. daily, weekly)
+                if (!isToday && curRrule[0] != '\0' && startEpoch < dayEndSec) {
+                    if (strstr(curRrule, "FREQ=DAILY")) {
+                        isToday = true;
+                    } else if (strstr(curRrule, "FREQ=WEEKLY")) {
+                        static const char* const dowCodes[] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
+                        const char* todayCode = dowCodes[now.dayOfTheWeek() % 7];
+                        const char* byDay = strstr(curRrule, "BYDAY=");
+                        if (byDay) {
+                            if (strstr(byDay, todayCode)) isToday = true;
+                        } else {
+                            DateTime origStart(startEpoch);
+                            if (origStart.dayOfTheWeek() == now.dayOfTheWeek()) isToday = true;
+                        }
+                    }
+                }
+
+                if (isToday) {
+                    safeCopy(events[outEvents].title, curSummary, sizeof(events[0].title));
+                    if (strchr(curDt, 'T')) {
+                        DateTime localStart(startEpoch);
+                        snprintf(events[outEvents].timeStr, sizeof(events[0].timeStr),
+                                 "%02u:%02u", localStart.hour(), localStart.minute());
+                    } else {
+                        safeCopy(events[outEvents].timeStr, "all day", sizeof(events[0].timeStr));
+                    }
+                    DebugLog::log("NET: Event for TODAY [%u] '%s' @ %s",
+                                  unsigned(outEvents), events[outEvents].title, events[outEvents].timeStr);
+                    ++outEvents;
+                } else {
+                    DebugLog::log("NET: Ignored non-today event '%s' (dt=%s)", curSummary, curDt);
+                }
             }
             inEvent = false;
             curSummary[0] = '\0';
             curDt[0] = '\0';
+            curDtEnd[0] = '\0';
+            curRrule[0] = '\0';
         } else if (line == "END:VTODO") {
-            if (inTodo && curSummary[0] != '\0' && outTodos < MAX_TODOS) {
-                safeCopy(todos[outTodos].title, curSummary, sizeof(todos[0].title));
-                todos[outTodos].completed = isCompleted;
-                DebugLog::log("NET: Todo [%u] '%s' (%s)",
-                              unsigned(outTodos), todos[outTodos].title,
-                              isCompleted ? "DONE" : "OPEN");
-                ++outTodos;
+            if (inTodo && curSummary[0] != '\0') {
+                if (!isCompleted) {
+                    if (numOpen < MAX_TODOS) {
+                        safeCopy(openTodos[numOpen].title, curSummary, sizeof(openTodos[0].title));
+                        openTodos[numOpen].completed = false;
+                        ++numOpen;
+                    }
+                } else {
+                    if (numDone < MAX_TODOS) {
+                        safeCopy(doneTodos[numDone].title, curSummary, sizeof(doneTodos[0].title));
+                        doneTodos[numDone].completed = true;
+                        ++numDone;
+                    }
+                }
             }
             inTodo = false;
             curSummary[0] = '\0';
@@ -235,8 +339,19 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     }
 
     https.end();
+
+    // Fill todos array with open tasks first, then completed tasks if space remains
+    outTodos = 0;
+    for (size_t i = 0; i < numOpen && outTodos < MAX_TODOS; ++i) {
+        todos[outTodos++] = openTodos[i];
+    }
+    for (size_t i = 0; i < numDone && outTodos < MAX_TODOS; ++i) {
+        todos[outTodos++] = doneTodos[i];
+    }
+
     return true;
 }
+
 } // namespace
 
 void begin() {
@@ -350,24 +465,27 @@ bool syncAll() {
         // Step B: Fetch tasks calendar if different from events calendar
         if (cfg.caldavTodoPath[0] != '\0' && strcmp(cfg.caldavCalendar, cfg.caldavTodoPath) != 0) {
             String tasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, false);
-            bool ok2 = fetchAndParseIcs(client, https, tasksUrl, cfg, parsedEvents, parsedTodos);
+            size_t extraEvents = 0;
+            size_t extraTodos = parsedTodos;
+            bool ok2 = fetchAndParseIcs(client, https, tasksUrl, cfg, extraEvents, extraTodos);
             if (!ok2 && tasksUrl.indexOf("@") != -1) {
                 String retryTasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, true);
-                fetchAndParseIcs(client, https, retryTasksUrl, cfg, parsedEvents, parsedTodos);
+                fetchAndParseIcs(client, https, retryTasksUrl, cfg, extraEvents, extraTodos);
             }
+            parsedTodos = extraTodos;
         }
 
-        if (parsedEvents > 0 || parsedTodos > 0) {
+        if (ok) {
             numEvents = parsedEvents;
             numTodos = parsedTodos;
             saveCache();
             snprintf(statusMsg, sizeof(statusMsg), "Synced %u ev, %u todo",
                      (unsigned)numEvents, (unsigned)numTodos);
-            DebugLog::log("NET: CalDAV sync SUCCESS: %u events, %u todos",
+            DebugLog::log("NET: CalDAV sync SUCCESS: %u events for today, %u todos",
                           (unsigned)numEvents, (unsigned)numTodos);
         } else {
-            snprintf(statusMsg, sizeof(statusMsg), "CalDAV: 0 items parsed");
-            DebugLog::log("NET: CalDAV returned 0 events/todos");
+            snprintf(statusMsg, sizeof(statusMsg), "CalDAV HTTP Failed");
+            DebugLog::log("NET: CalDAV HTTP request failed");
         }
     } else {
         safeCopy(statusMsg, "NTP OK (No CalDAV URL)", sizeof(statusMsg));

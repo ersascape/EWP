@@ -1,17 +1,17 @@
 #include "ui/watch_ui.h"
-#include "core/watch_clock.h"
-#include "core/debug_log.h"
-#include "core/buttons.h"
-#include "core/net_sync.h"
 #include "board_pins.h"
-#include "watchfaces/watchface_clock.h"
+#include "core/buttons.h"
+#include <SPI.h>
 #include "apps/app_drawer.h"
 #include "apps/app_calendar.h"
 #include "apps/app_agenda.h"
 #include "apps/app_todo.h"
 #include "apps/app_portal.h"
 #include "apps/app_status.h"
-#include <SPI.h>
+#include "watchfaces/watchface_clock.h"
+#include "core/watch_clock.h"
+#include "core/debug_log.h"
+#include "core/net_sync.h"
 #include <GxEPD2_BW.h>
 #include <Adafruit_GFX.h>
 #include <esp_system.h>
@@ -25,7 +25,8 @@ enum Screen : uint8_t { Clock, Drawer, Calendar, Agenda, Todo, Hotspot, Status, 
 Screen screen = Clock;
 
 bool dirty = true, firstFrame = true, shownRtcHealthy = false;
-uint32_t shownMinute = UINT32_MAX, lastFrameEnd = 0;
+bool panelPowered = false;
+uint32_t shownMinute = UINT32_MAX, lastFrameEnd = 0, lastActivityMs = 0;
 uint8_t partialFrames = 0;
 
 void busyCallback(const void*) {
@@ -39,21 +40,12 @@ void busyCallback(const void*) {
     delay(1);
 }
 
-void centered(const char* text, int16_t top, const GFXfont* font = nullptr) {
-    display.setFont(font);
-    display.setTextSize(1);
-    int16_t x, y;
-    uint16_t width, height;
-    display.getTextBounds(text, 0, 0, &x, &y, &width, &height);
-    display.setCursor((display.width() - int16_t(width)) / 2 - x, top - y);
-    display.print(text);
-}
-
 void render() {
     const uint32_t started = millis();
     const DateTime time = WatchClock::now();
 
-    const bool full = firstFrame || partialFrames >= 20;
+    // Full refresh only on initial boot or every 25 frames to clear faint ghosting
+    const bool full = firstFrame || partialFrames >= 25;
     DebugLog::log("EPD begin screen=%u mode=%s time=%02u:%02u:%02u",
                   unsigned(screen), full ? "full" : "partial",
                   unsigned(time.hour()), unsigned(time.minute()), unsigned(time.second()));
@@ -85,7 +77,10 @@ void render() {
         }
     } while (display.nextPage());
 
-    display.powerOff();
+    // Keep panel powered while actively interacting for fast, flicker-free partial refreshes!
+    panelPowered = true;
+    lastActivityMs = millis();
+
     partialFrames = full ? 0 : partialFrames + 1;
     shownMinute = time.unixtime() / 60;
     shownRtcHealthy = WatchClock::healthy();
@@ -93,8 +88,8 @@ void render() {
     dirty = false;
     lastFrameEnd = millis();
 
-    DebugLog::log("EPD end duration=%lu ms BUSY=%d",
-                  (unsigned long)(lastFrameEnd - started), digitalRead(Pins::EPD_BUSY));
+    DebugLog::log("EPD end duration=%lu ms BUSY=%d (partialFrames=%u)",
+                  (unsigned long)(lastFrameEnd - started), digitalRead(Pins::EPD_BUSY), partialFrames);
 }
 } // namespace
 
@@ -117,6 +112,7 @@ void WatchUi::begin() {
 void WatchUi::onButton(Buttons::Event event) {
     const Screen before = screen;
     const DateTime time = WatchClock::now();
+    lastActivityMs = millis();
 
     // Universal navigation: Hold B1 from ANY app exits back to App Drawer (or from Drawer to Clock)
     if (event == Buttons::Event::Home) {
@@ -178,7 +174,14 @@ void WatchUi::tick() {
         dirty = true;
     }
     // Limit repeated e-paper updates.
-    if (dirty && uint32_t(millis() - lastFrameEnd) >= 750) {
+    if (dirty && uint32_t(millis() - lastFrameEnd) >= 550) {
         render();
+    }
+
+    // Power off panel after 8 seconds of idle to conserve battery
+    if (panelPowered && uint32_t(millis() - lastActivityMs) >= 8000) {
+        display.powerOff();
+        panelPowered = false;
+        DebugLog::log("EPD: powered off (idle timeout)");
     }
 }
