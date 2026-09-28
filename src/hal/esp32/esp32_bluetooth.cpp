@@ -17,6 +17,17 @@
 namespace ersa {
 namespace hal {
 
+class BleSecCallbacks : public BLESecurityCallbacks {
+public:
+    uint32_t onPassKeyRequest() override { return 123456; }
+    void onPassKeyNotify(uint32_t pass_key) override { (void)pass_key; }
+    bool onConfirmPIN(uint32_t pass_key) override { (void)pass_key; return true; }
+    bool onSecurityRequest() override { return true; }
+    void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
+        DebugLog::log("BLE: Auth complete success=%d fail_reason=0x%x", cmpl.success, cmpl.fail_reason);
+    }
+};
+
 class Esp32Bluetooth::Impl : public BLEServerCallbacks, public BLECharacteristicCallbacks {
 public:
     Esp32Bluetooth* parent_{nullptr};
@@ -32,6 +43,18 @@ public:
         (void)pServer;
         connected_ = true;
         DebugLog::log("BLE: Central connected");
+        if (parent_ && parent_->connCb_) {
+            parent_->connCb_(true, parent_->connUserData_);
+        }
+    }
+
+    void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override {
+        (void)pServer;
+        connected_ = true;
+        DebugLog::log("BLE: Central connected (with connection params)");
+        if (param) {
+            esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
+        }
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(true, parent_->connUserData_);
         }
@@ -194,19 +217,47 @@ Result<void> Esp32Bluetooth::init() {
     pBatLevelChar->setValue(&battPct, 1);
     pBatService->start();
 
+    pImpl_->pCallChar_->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+    pImpl_->pMediaChar_->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+
+    // Configure BLE Security Bonding for native iOS Pairing & ANCS / AMS access
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+    BLEDevice::setSecurityCallbacks(new BleSecCallbacks());
+    BLESecurity* pSecurity = new BLESecurity();
+    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+    pSecurity->setCapability(ESP_IO_CAP_NONE);
+    pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
     pImpl_->initialized_ = true;
     return Result<void>();
 }
 
 void Esp32Bluetooth::startAdvertising() {
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->addServiceUUID(BLEUUID((uint16_t)0x180F));
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections
+
+    // Primary Advertisement Data: Flags + ANCS 128-bit Service Solicitation (21 bytes <= 31 max)
+    BLEAdvertisementData advData;
+    advData.setFlags(0x06); // General Discoverable + BR/EDR Not Supported
+
+    // 128-bit ANCS Solicitation UUID: 7905f431-b5ce-4e99-a40f-4b1e122d00d0
+    BLEUUID ancsUUID("7905f431-b5ce-4e99-a40f-4b1e122d00d0");
+    char solData[2];
+    solData[0] = 17;   // Length of AD element (1 byte type + 16 bytes UUID)
+    solData[1] = 0x15; // AD Type: 128-bit Service Solicitation
+    advData.addData(std::string(solData, 2) + std::string(reinterpret_cast<const char*>(ancsUUID.getNative()->uuid.uuid128), 16));
+    pAdvertising->setAdvertisementData(advData);
+
+    // Scan Response Data: Full device name ("Ersa Wearable") + 16-bit Service UUID (19 bytes <= 31 max)
+    BLEAdvertisementData scanResponse;
+    scanResponse.setName("Ersa Wearable");
+    scanResponse.setCompleteServices(BLEUUID((uint16_t)0xFFE0));
+    pAdvertising->setScanResponseData(scanResponse);
+
+    pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMinPreferred(0x12);
     BLEDevice::startAdvertising();
-    DebugLog::log("BLE: advertising started (name='Ersa Wearable', addr=%s)", getDeviceAddress());
+    DebugLog::log("BLE: advertising started with ANCS solicitation (name='Ersa Wearable', addr=%s)", getDeviceAddress());
 }
 
 void Esp32Bluetooth::stopAdvertising() {
