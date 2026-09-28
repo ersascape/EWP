@@ -82,6 +82,15 @@ void drawRightAlignedText(Adafruit_GFX& display, const char* text, int16_t right
     display.print(text);
 }
 
+void drawMusicNote(Adafruit_GFX& display, int16_t x, int16_t y) {
+    // Compact double eighth-note mark, independent of font glyph coverage.
+    display.fillCircle(x + 2, y + 12, 2, 1);
+    display.fillCircle(x + 8, y + 9, 2, 1);
+    display.drawLine(x + 4, y + 12, x + 4, y + 1, 1);
+    display.drawLine(x + 4, y + 1, x + 10, y + 1, 1);
+    display.drawLine(x + 10, y + 1, x + 10, y + 9, 1);
+}
+
 } // namespace
 
 void render(Adafruit_GFX& display, const DateTime& time, bool full) {
@@ -118,12 +127,12 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
         const char* title = bleMgr.getMediaTitle();
         if (title && title[0] != '\0' && strcmp(title, "No Media") != 0) {
             char mediaBuf[32];
-            const bool playing = bleMgr.isPlaying();
-            snprintf(mediaBuf, sizeof(mediaBuf), "%s %s", playing ? ">" : "||", title);
+            snprintf(mediaBuf, sizeof(mediaBuf), "%s", title);
             if (strlen(mediaBuf) > 20) {
-                mediaBuf[17] = '.'; mediaBuf[18] = '.'; mediaBuf[19] = '.'; mediaBuf[20] = '\0';
+                mediaBuf[16] = '.'; mediaBuf[17] = '.'; mediaBuf[18] = '.'; mediaBuf[19] = '\0';
             }
-            drawRightAlignedText(display, mediaBuf, 184, 150, &MiSansLatin_Regular8pt7b);
+            drawRightAlignedText(display, mediaBuf, 156, 150, &MiSansLatin_Regular8pt7b);
+            drawMusicNote(display, 166, 136);
         }
     }
 
@@ -140,10 +149,6 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(leftX, 134);
         display.print(ersa::strings::MSG_LOW_BATT);
-    } else if (bleMgr.isConnected()) {
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(leftX, 134);
-        display.print("ble on");
     }
 
     display.setTextColor(1);    // 1 = GxEPD_WHITE
