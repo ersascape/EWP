@@ -72,10 +72,6 @@ public:
         }
     }
 
-    Rect getPartialBounds() const override {
-        return Rect{0, 32, 200, 138};
-    }
-
     void render(hal::IDisplay& display, bool fullRefresh) override {
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
@@ -135,10 +131,6 @@ public:
         }
     }
 
-    Rect getPartialBounds() const override {
-        return Rect{0, 0, 200, 172};
-    }
-
     void render(hal::IDisplay& display, bool fullRefresh) override {
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
@@ -164,10 +156,6 @@ public:
         if (AppTodo::onButton(legacy)) {
             ApplicationManager::instance().markDirty(false);
         }
-    }
-
-    Rect getPartialBounds() const override {
-        return Rect{0, 32, 200, 138};
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {

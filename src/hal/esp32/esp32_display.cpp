@@ -68,7 +68,8 @@ void Esp32Display::refresh(bool full) {
 }
 
 void Esp32Display::refreshRect(const Rect& rect) {
-    display_.displayWindow(rect.x, rect.y, rect.w, rect.h);
+    (void)rect;
+    display_.display(true);
     powered_ = true;
 }
 

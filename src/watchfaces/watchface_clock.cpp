@@ -84,36 +84,32 @@ void drawRightAlignedText(Adafruit_GFX& display, const char* text, int16_t right
 } // namespace
 
 void render(Adafruit_GFX& display, const DateTime& time, bool full) {
-    if (full) {
-        // 1. Full solid black canvas
-        display.fillScreen(0);      // 0 = GxEPD_BLACK
+    (void)full;
+    // 1. Full solid black canvas
+    display.fillScreen(0);      // 0 = GxEPD_BLACK
 
-        // 3. Bottom-Right Date: e.g. "thursday" / "november 12th, 2020"
-        const uint8_t dow = time.dayOfTheWeek() % 7;
-        const uint8_t mon = (time.month() >= 1 && time.month() <= 12) ? (time.month() - 1) : 0;
+    // 3. Bottom-Right Date: e.g. "thursday" / "november 12th, 2020"
+    const uint8_t dow = time.dayOfTheWeek() % 7;
+    const uint8_t mon = (time.month() >= 1 && time.month() <= 12) ? (time.month() - 1) : 0;
 
-        char dateBuf[36];
-        snprintf(dateBuf, sizeof(dateBuf), "%s %u%s, %u",
-                 monthsLower[mon], unsigned(time.day()),
-                 getOrdinalSuffix(time.day()), unsigned(time.year()));
+    char dateBuf[36];
+    snprintf(dateBuf, sizeof(dateBuf), "%s %u%s, %u",
+             monthsLower[mon], unsigned(time.day()),
+             getOrdinalSuffix(time.day()), unsigned(time.year()));
 
-        drawRightAlignedText(display, daysLower[dow], 184, 168, &MiSansLatin_Regular8pt7b);
-        drawRightAlignedText(display, dateBuf, 184, 184, &MiSansLatin_Regular8pt7b);
+    drawRightAlignedText(display, daysLower[dow], 184, 168, &MiSansLatin_Regular8pt7b);
+    drawRightAlignedText(display, dateBuf, 184, 184, &MiSansLatin_Regular8pt7b);
 
-        // 4. Subtle, minimal status in bottom-left corner
-        constexpr int16_t leftX = 18;
-        if (NetSync::isSyncing()) {
-            display.setFont(&MiSansLatin_Regular8pt7b);
-            display.setCursor(leftX, 184);
-            display.print(ersa::strings::MSG_SYNCING);
-        } else if (Battery::isConnected() && Battery::percentage() <= 20) {
-            display.setFont(&MiSansLatin_Regular8pt7b);
-            display.setCursor(leftX, 184);
-            display.print(ersa::strings::MSG_LOW_BATT);
-        }
-    } else {
-        // Partial refresh: clear ONLY the time words region (y: 16 to 140)
-        display.fillRect(0, 16, 200, 124, 0);
+    // 4. Subtle, minimal status in bottom-left corner
+    constexpr int16_t leftX = 18;
+    if (NetSync::isSyncing()) {
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(leftX, 184);
+        display.print(ersa::strings::MSG_SYNCING);
+    } else if (Battery::isConnected() && Battery::percentage() <= 20) {
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(leftX, 184);
+        display.print(ersa::strings::MSG_LOW_BATT);
     }
 
     display.setTextColor(1);    // 1 = GxEPD_WHITE
@@ -123,8 +119,6 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
     const char* l2 = "";
     const char* l3 = "";
     timeToWords(time.hour(), time.minute(), l1, l2, l3);
-
-    constexpr int16_t leftX = 18;
 
     if (l3[0] != '\0') {
         // 3 lines layout

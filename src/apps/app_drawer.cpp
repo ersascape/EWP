@@ -49,23 +49,19 @@ void setSelected(Item item) {
 }
 
 void render(Adafruit_GFX& display, bool full) {
-    if (full) {
-        display.fillScreen(0);   // Solid black
-        display.setTextColor(1); // White
+    (void)full;
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-        // Clean left-aligned lowercase header
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(18, 24);
-        display.print(ersa::strings::APP_DRAWER_HEADER);
+    // Clean left-aligned lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print(ersa::strings::APP_DRAWER_HEADER);
 
-        // Minimal footer without harsh dividing lines
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 186);
-        display.print(ersa::strings::NAV_DRAWER_FOOTER);
-    } else {
-        // Partial refresh: clear ONLY the items region (y: 32 to 170)
-        display.fillRect(0, 32, 200, 138, 0);
-    }
+    // Minimal footer without harsh dividing lines
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print(ersa::strings::NAV_DRAWER_FOOTER);
 
     display.setTextColor(1);
 

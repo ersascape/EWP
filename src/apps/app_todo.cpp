@@ -60,36 +60,31 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display, bool full) {
-    if (full) {
-        display.fillScreen(0);   // Solid black
-        display.setTextColor(1); // White
+    (void)full;
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-        // Clean lowercase header
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(18, 24);
-        display.print(ersa::strings::APP_TITLE_TASKS);
+    // Clean lowercase header
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print(ersa::strings::APP_TITLE_TASKS);
 
-        const size_t total = NetSync::todoCount();
-        if (total > 0) {
-            char countBuf[20];
-            snprintf(countBuf, sizeof(countBuf), "%u tasks", unsigned(total));
-            drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
-        } else {
-            drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
-        }
-
-        // Clean minimal footer
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 186);
-        display.print((total == 0) ? ersa::strings::NAV_TODO_EMPTY_FOOT : ersa::strings::NAV_TODO_FOOTER);
+    const size_t total = NetSync::todoCount();
+    if (total > 0) {
+        char countBuf[20];
+        snprintf(countBuf, sizeof(countBuf), "%u tasks", unsigned(total));
+        drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
     } else {
-        // Partial refresh: clear ONLY the tasks content area (y: 32 to 170)
-        display.fillRect(0, 32, 200, 138, 0);
+        drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
     }
+
+    // Clean minimal footer
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    display.print((total == 0) ? ersa::strings::NAV_TODO_EMPTY_FOOT : ersa::strings::NAV_TODO_FOOTER);
 
     display.setTextColor(1);
 
-    const size_t total = NetSync::todoCount();
     if (total == 0) {
         display.setFont(&MiSansLatin_Regular10pt7b);
         display.setCursor(18, 70);

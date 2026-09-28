@@ -44,19 +44,15 @@ bool onButton(Buttons::Event event) {
 
 void render(Adafruit_GFX& display, const DateTime& now, bool full) {
     (void)now;
-    if (full) {
-        display.fillScreen(0);   // Solid black
-        display.setTextColor(1); // White
+    (void)full;
+    display.fillScreen(0);   // Solid black
+    display.setTextColor(1); // White
 
-        // Clean minimal footer
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 186);
-        const size_t total = NetSync::eventCount();
-        display.print((total == 0) ? ersa::strings::NAV_AGENDA_EMPTY_FOOT : ersa::strings::NAV_AGENDA_FOOTER);
-    } else {
-        // Partial refresh: clear header and cards area (y: 0 to 172), leaving footer intact
-        display.fillRect(0, 0, 200, 172, 0);
-    }
+    // Clean minimal footer
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(18, 186);
+    const size_t total = NetSync::eventCount();
+    display.print((total == 0) ? ersa::strings::NAV_AGENDA_EMPTY_FOOT : ersa::strings::NAV_AGENDA_FOOTER);
 
     display.setTextColor(1);
 
@@ -64,8 +60,6 @@ void render(Adafruit_GFX& display, const DateTime& now, bool full) {
     display.setFont(&MiSansLatin_Bold10pt7b);
     display.setCursor(18, 24);
     display.print(ersa::strings::APP_TITLE_AGENDA);
-
-    const size_t total = NetSync::eventCount();
 
     if (total > 0) {
         char countBuf[16];

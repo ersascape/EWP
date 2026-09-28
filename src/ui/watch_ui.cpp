@@ -65,46 +65,26 @@ void renderCurrentApp() {
     // NEVER on button press, scroll, or normal minute ticks!
     const bool dayChanged = (shownDay != 0 && time.day() != shownDay);
     const bool hardwareFull = firstFrame || (partialFrames >= 360) || dayChanged;
-    const bool fullCanvas = hardwareFull || appManager.isFullRefreshNeeded() || appManager.isAppSwitched();
 
-    DebugLog::log("EPD begin app=%s hwFull=%d fullCanvas=%d time=%02u:%02u:%02u",
-                  activeApp->getId(), hardwareFull, fullCanvas,
+    DebugLog::log("EPD begin app=%s hwFull=%d time=%02u:%02u:%02u",
+                  activeApp->getId(), hardwareFull,
                   unsigned(time.hour()), unsigned(time.minute()), unsigned(time.second()));
 
-    if (fullCanvas) {
-        gx.fillScreen(GxEPD_BLACK);
-        gx.setTextColor(GxEPD_WHITE);
-        gx.setTextWrap(false);
-        activeApp->render(espDisp, true);
+    gx.fillScreen(GxEPD_BLACK);
+    gx.setTextColor(GxEPD_WHITE);
+    gx.setTextWrap(false);
+    activeApp->render(espDisp, true);
 
-        if (hardwareFull) {
-            gx.setFullWindow();
-            gx.display(false); // Hardware full refresh (clears ghosting)
-            partialFrames = 0;
-            firstFrame = false;
-        } else {
-            gx.display(true);  // Hardware fast partial refresh of full screen (differential, no flash)
-            partialFrames++;
-        }
-        appManager.clearAppSwitched();
+    if (hardwareFull) {
+        gx.setFullWindow();
+        gx.display(false); // Hardware full refresh (clears ghosting)
+        partialFrames = 0;
+        firstFrame = false;
     } else {
-        const ersa::Rect bounds = activeApp->getPartialBounds();
-        if (bounds.w >= gx.width() && bounds.h >= gx.height()) {
-            gx.fillScreen(GxEPD_BLACK);
-            gx.setTextColor(GxEPD_WHITE);
-            gx.setTextWrap(false);
-            activeApp->render(espDisp, false);
-            gx.display(true);
-        } else {
-            // Windowed partial refresh: clear ONLY the sub-window in buffer
-            gx.fillRect(bounds.x, bounds.y, bounds.w, bounds.h, GxEPD_BLACK);
-            gx.setTextColor(GxEPD_WHITE);
-            gx.setTextWrap(false);
-            activeApp->render(espDisp, false);
-            gx.displayWindow(bounds.x, bounds.y, bounds.w, bounds.h);
-        }
+        gx.display(true);  // Hardware fast partial refresh of full screen (differential, no flash)
         partialFrames++;
     }
+    appManager.clearAppSwitched();
 
     panelPowered = true;
     lastActivityMs = millis();
