@@ -1,6 +1,6 @@
-# Ersa Watch OS (EWP)
+# Ersa Wearable Platform (EWP)
 
-An open-source, minimalist smartwatch firmware for the Seeed Studio XIAO ESP32-C3 and 1.54" monochrome E-Paper Display (GxEPD2 / SSD1681), inspired by the iconic **Pebble Text Watch** aesthetic.
+An open-source, minimalist smartwatch firmware for the Ampere Works T1E, inspired by the iconic **Pebble Text Watch** aesthetic.
 
 ---
 
