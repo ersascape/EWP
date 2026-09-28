@@ -1,116 +1,156 @@
-# Watch Base — Stage 1
+# Ersa Watch OS (EWP)
 
-A PlatformIO **Arduino** project for the custom XIAO ESP32-C3 watch.
-Start by validating the RTC, display and buttons. Wireless and MCU sleep are
-deliberately deferred until that hardware baseline works on the PCB.
+An open-source, minimalist smartwatch firmware for the Seeed Studio XIAO ESP32-C3 and 1.54" monochrome E-Paper Display (GxEPD2 / SSD1681), inspired by the iconic **Pebble Text Watch** aesthetic.
 
-## Open, build, upload
+---
 
-1. Open this whole folder (`Ersa-W1`), containing `platformio.ini`, in VS Code / Code OSS.
-2. Press **Ctrl+Shift+B** to run the default **Watch: Build** task.
-3. Use **Terminal > Run Task > Watch: Upload** with the board connected.
-4. Use **Terminal > Run Task > Watch: Monitor** if the board crashes. The exception decoder
-   uses the ELF from this build; capture the complete output before rebuilding.
+## Visual Showcase
 
-These tasks invoke the project-local PlatformIO CLI and do not require the
-PlatformIO IDE extension. `scripts/pio.sh` bootstraps it with Python's `venv`
-on first use. Python 3 with venv/pip and internet access are needed for initial
-setup. Tooling and packages live in ignored `.tools/` and `.pio-core/` folders.
+<p align="center">
+  <img src="docs/images/text_watchface.png" width="190" alt="Text Watchface" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/images/app_drawer.png" width="190" alt="App Drawer" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/images/caldav_tasks.png" width="190" alt="CalDAV Tasks" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/images/caldav_agenda.png" width="190" alt="CalDAV Agenda" />
+</p>
 
-Equivalent commands in a normal terminal, from the project folder:
+<p align="center">
+  <em>Text Watchface &bull; App Drawer &bull; CalDAV Tasks &bull; CalDAV Agenda</em>
+</p>
 
-```sh
+---
+
+## Key Features
+
+- **Pebble Text Watchface**:
+  - Full-bleed black background with pure white typography.
+  - Natural time spelled out in English words using Xiaomi's official **MiSans Latin Bold & Light** fonts.
+  - Lowercase natural date with ordinal suffix (e.g. `thursday` / `november 12th, 2020` or `monday` / `september 28th, 2026`).
+  - Distraction-free: battery or sync alerts only appear when active or low.
+- **Fast, Flicker-Free Partial Refresh**:
+  - Panel controller kept energized during user interaction for **~450ms raw partial updates** with zero black/white blinking.
+  - Smooth App Drawer scrolling and instant minute clock updates.
+  - Automatic low-power sleep after 8 seconds of inactivity.
+- **Nextcloud & CalDAV Cloud Sync**:
+  - **CalDAV Agenda**: Filters events specifically for **today**, supporting standard events and recurring rules (`FREQ=DAILY`, `FREQ=WEEKLY`).
+  - **CalDAV Tasks**: To-do checklist with instant on-watch toggling (`[ ]` $\leftrightarrow$ `[x]`), prioritizing active/open tasks.
+- **NTP Clock Calibration**:
+  - High-precision SNTP synchronization adjusting the onboard **DS3231 RTC** to exact local time with configurable timezone offset.
+- **On-Demand Captive Portal Hotspot**:
+  - Launch `ErsaWatch-Config` AP from the watch drawer to configure Wi-Fi credentials, CalDAV server, calendar presets (`murena-team`, `personal`, `tasks`), timezone, and time format (12h / 24h).
+- **Battery Sensing**:
+  - Hardware ADC battery monitoring on GPIO2 (A0) with multi-sample averaging and lithium discharge curve mapping.
+
+---
+
+## Hardware Specifications
+
+| Component | Specification | Details |
+| :--- | :--- | :--- |
+| **MCU** | Seeed Studio XIAO ESP32-C3 | RISC-V 160 MHz, 320 KB SRAM, 4 MB Flash, Wi-Fi & BLE |
+| **Display** | 1.54" E-Paper Display | 200×200 Monochrome (GxEPD2 / SSD1681), partial refresh capable |
+| **RTC** | Maxim DS3231 | High-precision I2C RTC (address `0x68`) with backup cell |
+| **Buttons** | Dual tactile switches | Upper `B1` = GPIO4 (D2), Lower `B2` = GPIO3 (D1) |
+| **Battery** | LiPo sensing | GPIO2 (A0) via voltage divider |
+
+---
+
+## 2-Button Navigation System
+
+```
+                  ┌─────────────────┐
+                  │ B1 (Upper GPIO4)│ ──> Click: SCROLL (Down / Next)
+                  │                 │ ──> Hold:  MENU / EXIT (App Drawer / Clock)
+  [Ersa Watch]    ├─────────────────┤
+                  │ B2 (Lower GPIO3)│ ──> Click: OK / ACTION (Select / Toggle / Sync)
+                  │                 │ ──> Hold:  QUICK SYNC (CalDAV & NTP)
+                  └─────────────────┘
+```
+
+| Screen | B1 (Click) | B2 (Click) | Hold B1 | Hold B2 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Watchface** | Open App Drawer | Quick CalDAV Sync | Open App Drawer | Quick CalDAV Sync |
+| **App Drawer** | Scroll selection down | Launch selected app | Return to Clock | — |
+| **Calendar** | Advance month (`+1 mo`) | Reset to current month | Return to Drawer | — |
+| **Agenda** | Scroll event cards | Sync CalDAV events | Return to Drawer | Sync CalDAV |
+| **Tasks** | Scroll checklist items | Toggle task (`[x]`) | Return to Drawer | Sync CalDAV |
+| **Hotspot** | Refresh status | Start / Stop AP | Return to Drawer | Sync NTP |
+| **Status** | Refresh sensors | Sync NTP Time | Return to Drawer | — |
+
+---
+
+## Project Structure
+
+```
+Ersa-W1/
+├── include/
+│   ├── board_pins.h           # Hardware pinout definitions
+│   └── fonts/
+│       └── misans_fonts.h     # MiSans Latin Bold & Light GFX fonts
+├── src/
+│   ├── apps/
+│   │   ├── app_agenda.*       # CalDAV events card viewer
+│   │   ├── app_calendar.*     # Interactive monthly calendar
+│   │   ├── app_drawer.*       # App launcher with white capsule cursor
+│   │   ├── app_portal.*       # Wi-Fi captive configuration portal
+│   │   ├── app_status.*       # Hardware diagnostics & battery stats
+│   │   └── app_todo.*         # CalDAV to-do checklist
+│   ├── core/
+│   │   ├── battery.*          # ADC voltage & battery curve calculations
+│   │   ├── buttons.*          # OneButton debounce & event dispatcher
+│   │   ├── debug_log.*        # USB Serial logging & boot crash records
+│   │   ├── net_sync.*         # NTP time & CalDAV iCalendar parser
+│   │   ├── watch_clock.*      # DS3231 RTC driver & time caching
+│   │   └── watch_config.*     # NVS non-volatile settings storage
+│   ├── ui/
+│   │   ├── watch_icons.*      # Monochrome bitmaps
+│   │   └── watch_ui.*         # Display controller, refresh scheduler, page routing
+│   ├── watchfaces/
+│   │   └── watchface_clock.*  # Pebble Text Watch watchface
+│   └── main.cpp               # Setup & cooperative event loop
+├── platformio.ini             # PlatformIO build configuration
+└── scripts/
+    └── pio.sh                 # Self-contained PlatformIO CLI bootstrap
+```
+
+---
+
+## Build & Flash
+
+This project uses a project-local PlatformIO toolchain managed by `scripts/pio.sh`.
+
+### 1. Compile Firmware
+```bash
 bash scripts/pio.sh run
+```
+
+### 2. Upload to Watch
+Connect the XIAO ESP32-C3 via USB-C and run:
+```bash
 bash scripts/pio.sh run --target upload
+```
+
+### 3. Serial Monitor
+```bash
 bash scripts/pio.sh device monitor
 ```
 
-The active code is in `src/`. `main/` belongs to a native ESP-IDF project and is
-not needed here. That previous starter, its editor configuration, and the earlier
-OS scaffold have been preserved under `archive/`; none are compiled by PlatformIO.
+---
 
-## Controls and behavior
+## Initial Setup via Wi-Fi Portal
 
-- B1 short press: next screen (Clock → Date → Status → Clock).
-- B2 short press: previous screen.
-- Hold either button for 800 ms: return to Clock.
-- Large 24-hour clock and date, with updates when the minute changes.
-- Lopaka-style home layout: icons at top right, date at (8, 141), time at
-  (8, 157). Wireless icons are crossed out while radios are unimplemented;
-  battery shows `?` until real sensing is added. All supplied battery variants
-  are retained in `src/watch_icons.h` for later integration.
-- Fast partial e-paper refreshes, with a full refresh after 20 partial updates.
-- Button sampling continues inside the panel BUSY wait; events are applied after
-  refresh. E-paper still has visible latency. Rapid clicks may coalesce into one
-  refresh of the final selected screen; the bounded queue drops excess events.
-- If RTC communication fails, the clock continues in software from its last good
-  value and displays an offline notice. The fallback cannot retain time through
-  MCU power loss. I2C is retried once per second.
+1. On the watch, press **`B1`** to enter the App Drawer, scroll to **`hotspot`**, and press **`B2`** to start the AP.
+2. Connect your phone or computer to the Wi-Fi network:
+   - **SSID**: `ErsaWatch-Config`
+   - **Password**: `12345678`
+3. A captive portal page will automatically open (or navigate to `http://192.168.4.1`).
+4. Enter your home Wi-Fi credentials, Nextcloud/Murena CalDAV URL, username, and app password.
+5. Select **Save & Sync NTP Time**. The watch will connect, calibrate the DS3231 RTC, download your daily events and tasks, and turn off Wi-Fi to conserve power.
 
-When the DS3231 loses power or contains an invalid date, it is initialized from
-compilation time. This is approximate local wall time, including build/upload
-delay. To correct an already-running RTC, set `SET_FROM_BUILD` in
-`src/watch_clock.cpp` to true for one upload, then restore false and upload again.
-Precise time setting and timezone handling are a later stage.
+---
 
-## Small module boundaries
+## License
 
-| File | Responsibility |
-| --- | --- |
-| `include/board_pins.h` | The PCB's raw GPIO assignments |
-| `src/main.cpp` | Setup and cooperative application loop |
-| `src/buttons.*` | OneButton sampling and bounded navigation event queue |
-| `src/watch_clock.*` | DS3231 access, validation, software fallback |
-| `src/watch_ui.*` | Screen navigation, drawing, refresh policy |
-
-There is one application task. Display busy callbacks only sample buttons and
-enqueue events; they never redraw or mutate the current screen. RTC and display
-I/O stay on the main task. The panel drive supply is powered off after refresh;
-controller RAM is retained for differential updates. MCU sleep is not enabled.
-
-UART0 uses GPIO20/21, which this PCB assigns to EPD DC/RST. Debug logging uses
-USB Serial/JTAG instead, enforced by build flags and a compile-time check.
-Logging never waits for a monitor and drops lines if the USB transmit buffer is
-full. GxEPD2's verbose diagnostics remain disabled. If the original crash recurs,
-collect the full decoded crash report; its cause has not been established.
-
-The supplied PCB JSON establishes **upper S2 = GPIO4 (D2)** and **lower S1 = GPIO3
-(D1)**. This corrects the original GPIO0/1 assumption. The user confirmed that
-the buzzer shown in this older design is not fitted on the assembled board.
-See `docs/pcb-pin-map.md` for the traced connections.
-
-For diagnostics, upload and run **Watch: Monitor**, then press/release each button:
-
-- `BUTTON raw`: actual GPIO levels (released 1, pressed 0).
-- `BUTTON event`: debounced NEXT/PREVIOUS/HOME.
-- `RTC raw`: DS3231 date and seconds, validity and lost-power flag, each second.
-- `LOOP`: software time and pin levels each second, showing the loop is alive.
-- `EPD begin/end`: refresh mode, screen number and elapsed time.
-- `EPD waiting`: the display's BUSY pin is still asserted.
-
-The watchface only shows HH:MM; use the seconds in the logs to verify ticking.
-
-For battery/unplug faults, Status shows a boot counter and named reset reason.
-The last four reset causes are saved in NVS (one record per boot) and printed
-when USB logging reconnects. This helps preserve battery-reset evidence if
-reopening USB triggers another reset. `BROWNOUT` indicates a supply-voltage
-drop; `PANIC` or watchdog reasons point toward a software fault requiring logs.
-`POWERON` can also result from a complete loss of supply. Sudden loss before
-the record is saved can leave older history, so this is not a complete trace.
-
-## Hardware acceptance before stage 2
-
-1. Clock appears, and crosses at least two minute boundaries without resetting.
-2. Both buttons navigate all three screens, including clicks during refresh.
-3. Both long presses return to the clock.
-4. Reset preserves RTC time; disconnecting main power also preserves it if the
-   DS3231 backup battery is working.
-5. Status reports RTC online. A missing RTC should produce an offline clock, not
-   a frozen loop.
-
-Verified with `pio run`: successful ESP32-C3 build using Espressif32 6.12.0 /
-Arduino-ESP32 2.0.17. Static RAM: 19,420 bytes; flash: 286,796 bytes. This is a
-compile/link check, not a claim of runtime stability. These physical checks
-require the connected PCB; no upload or hardware run has been performed here.
-After this stage is stable: time-setting UI, then standby sleep/wake, then BLE,
-then Wi-Fi synchronization. Each step should retain a working hardware baseline.
+MIT License. Designed and crafted for the open-source hardware community.

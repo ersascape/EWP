@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include <time.h>
 #include <ctype.h>
+#include <esp_sntp.h>
 
 namespace NetSync {
 
@@ -376,6 +377,29 @@ void toggleTodo(size_t index) {
 bool isSyncing() { return syncing; }
 const char* lastStatus() { return statusMsg; }
 
+bool fetchNtpUtc(time_t& outUtc, uint32_t timeoutMs = 8000) {
+    if (esp_sntp_enabled()) {
+        esp_sntp_stop();
+    }
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.google.com");
+    sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+    sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+    esp_sntp_init();
+
+    const uint32_t startMs = millis();
+    while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && (millis() - startMs) < timeoutMs) {
+        delay(100);
+    }
+
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+        outUtc = time(nullptr);
+        return true;
+    }
+    return false;
+}
+
 bool syncNtp() {
     const auto& cfg = WatchConfig::get();
     syncing = true;
@@ -387,24 +411,14 @@ bool syncNtp() {
 
     safeCopy(statusMsg, "Syncing NTP...", sizeof(statusMsg));
     DebugLog::log("NET: Requesting NTP time (tz offset %d min)", cfg.timezoneOffsetMin);
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-
-    const uint32_t startMs = millis();
-    time_t now = 0;
-    while ((millis() - startMs) < 6000) {
-        now = time(nullptr);
-        if (now > 1700000000) break; // Valid epoch (post-2023)
-        delay(250);
-    }
-
-    bool success = false;
-    if (now > 1700000000) {
-        const uint32_t localEpoch = static_cast<uint32_t>((int64_t)now + ((int64_t)cfg.timezoneOffsetMin * 60));
+    time_t utcEpoch = 0;
+    bool success = fetchNtpUtc(utcEpoch, 8000);
+    if (success) {
+        const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
         WatchClock::setEpoch(localEpoch);
         safeCopy(statusMsg, "NTP Time Synced", sizeof(statusMsg));
         DebugLog::log("NET: NTP sync SUCCESS utc=%lu local=%lu (tzOffset=%d min)",
-                      (unsigned long)now, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
-        success = true;
+                      (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
     } else {
         safeCopy(statusMsg, "NTP Timeout", sizeof(statusMsg));
         DebugLog::log("NET: NTP sync timeout");
@@ -424,21 +438,16 @@ bool syncAll() {
         return false;
     }
 
-    // 1. Sync NTP time
+    // 1. Sync NTP time using guaranteed SNTP completed status
     safeCopy(statusMsg, "Syncing NTP...", sizeof(statusMsg));
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    const uint32_t startMs = millis();
-    time_t now = 0;
-    while ((millis() - startMs) < 6000) {
-        now = time(nullptr);
-        if (now > 1700000000) break;
-        delay(250);
-    }
-    if (now > 1700000000) {
-        const uint32_t localEpoch = static_cast<uint32_t>((int64_t)now + ((int64_t)cfg.timezoneOffsetMin * 60));
+    time_t utcEpoch = 0;
+    if (fetchNtpUtc(utcEpoch, 8000)) {
+        const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
         WatchClock::setEpoch(localEpoch);
         DebugLog::log("NET: NTP synced utc=%lu local=%lu (tzOffset=%d min)",
-                      (unsigned long)now, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
+                      (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
+    } else {
+        DebugLog::log("NET: NTP sync timeout in syncAll; keeping RTC time");
     }
 
     // 2. Sync CalDAV (if server URL configured)
