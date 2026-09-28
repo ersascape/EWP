@@ -8,6 +8,7 @@
 #include "apps/app_status.h"
 #include "apps/app_now_playing.h"
 #include "apps/app_call.h"
+#include "apps/app_pairing.h"
 #include "core/buttons.h"
 #include "core/watch_clock.h"
 #include "core/debug_log.h"
@@ -67,6 +68,9 @@ public:
                     break;
                 case AppDrawer::Item::Calls:
                     ApplicationManager::instance().switchTo("app_call");
+                    break;
+                case AppDrawer::Item::Pairing:
+                    ApplicationManager::instance().switchTo("app_pairing");
                     break;
                 case AppDrawer::Item::Hotspot:
                     ApplicationManager::instance().switchTo("app_portal");
@@ -284,6 +288,30 @@ public:
     }
 };
 
+// 9. AppPairing Application
+class PairingApp : public Application {
+public:
+    const char* getId() const override { return "app_pairing"; }
+    const char* getTitle() const override { return "Pairing"; }
+
+    void onEvent(const events::Event& event) override {
+        const auto legacy = toLegacyButtonEvent(event);
+        if (AppPairing::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
+    }
+
+    void render(hal::IDisplay& display, bool fullRefresh) override {
+        (void)fullRefresh;
+#if defined(ARDUINO)
+        auto* esp = static_cast<hal::Esp32Display*>(&display);
+        if (esp) AppPairing::render(esp->getGfx());
+#else
+        (void)display;
+#endif
+    }
+};
+
 static DrawerApp s_drawerApp;
 static CalendarApp s_calendarApp;
 static AgendaApp s_agendaApp;
@@ -292,6 +320,7 @@ static PortalApp s_portalApp;
 static StatusApp s_statusApp;
 static MediaApp s_mediaApp;
 static CallApp s_callApp;
+static PairingApp s_pairingApp;
 
 } // namespace
 
@@ -303,6 +332,7 @@ void registerAllApps(ApplicationManager& manager) {
     AppPortal::begin();
     AppNowPlaying::begin();
     AppCall::begin();
+    AppPairing::begin();
 
     manager.registerApp(&watchface::AppWatchface::instance());
     manager.registerApp(&s_drawerApp);
@@ -313,6 +343,7 @@ void registerAllApps(ApplicationManager& manager) {
     manager.registerApp(&s_statusApp);
     manager.registerApp(&s_mediaApp);
     manager.registerApp(&s_callApp);
+    manager.registerApp(&s_pairingApp);
 }
 
 } // namespace app

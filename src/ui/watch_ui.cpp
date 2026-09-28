@@ -132,19 +132,35 @@ void WatchUi::begin() {
         }
     }, &appManager);
 
-    // Re-render when track or playback state changes if NowPlaying is active
+    // Re-render when track or playback state changes (for NowPlaying app and Watchface complication)
     eventBus.subscribe(ersa::events::EventType::MediaTrackChanged, [](const ersa::events::Event&, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_media") == 0) {
-            mgr->markDirty(false);
+        if (mgr && mgr->getActiveApp()) {
+            const char* id = mgr->getActiveApp()->getId();
+            if (strcmp(id, "app_media") == 0 || strcmp(id, "watchface_clock") == 0) {
+                mgr->markDirty(false);
+            }
         }
     }, &appManager);
 
     eventBus.subscribe(ersa::events::EventType::MediaStateChanged, [](const ersa::events::Event&, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_media") == 0) {
-            mgr->markDirty(false);
+        if (mgr && mgr->getActiveApp()) {
+            const char* id = mgr->getActiveApp()->getId();
+            if (strcmp(id, "app_media") == 0 || strcmp(id, "watchface_clock") == 0) {
+                mgr->markDirty(false);
+            }
         }
+    }, &appManager);
+
+    eventBus.subscribe(ersa::events::EventType::BleConnected, [](const ersa::events::Event&, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr) mgr->markDirty(false);
+    }, &appManager);
+
+    eventBus.subscribe(ersa::events::EventType::BleDisconnected, [](const ersa::events::Event&, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr) mgr->markDirty(false);
     }, &appManager);
 
     ersa::app::registerAllApps(appManager);

@@ -166,21 +166,65 @@ Result<void> Esp32Bluetooth::init() {
 
     pImpl_->pService_->start();
 
+    // Standard Device Information Service (0x180A)
+    BLEService* pDisService = pImpl_->pServer_->createService(BLEUUID((uint16_t)0x180A));
+    BLECharacteristic* pMfrChar = pDisService->createCharacteristic(
+        BLEUUID((uint16_t)0x2A29), BLECharacteristic::PROPERTY_READ);
+    pMfrChar->setValue("Ersa");
+    BLECharacteristic* pModelChar = pDisService->createCharacteristic(
+        BLEUUID((uint16_t)0x2A24), BLECharacteristic::PROPERTY_READ);
+    pModelChar->setValue("T1E Wearable");
+    BLECharacteristic* pFwChar = pDisService->createCharacteristic(
+        BLEUUID((uint16_t)0x2A26), BLECharacteristic::PROPERTY_READ);
+    pFwChar->setValue("1.0.0");
+    pDisService->start();
+
+    // Standard Battery Service (0x180F)
+    BLEService* pBatService = pImpl_->pServer_->createService(BLEUUID((uint16_t)0x180F));
+    BLECharacteristic* pBatLevelChar = pBatService->createCharacteristic(
+        BLEUUID((uint16_t)0x2A19),
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    pBatLevelChar->addDescriptor(new BLE2902());
+    uint8_t battPct = 100;
+    pBatLevelChar->setValue(&battPct, 1);
+    pBatService->start();
+
+    // BLE Security configuration for standard phone OS pairing/bonding
+    BLESecurity* pSecurity = new BLESecurity();
+    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+    pSecurity->setCapability(ESP_IO_CAP_NONE);
+    pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
     return Result<void>();
 }
 
 void Esp32Bluetooth::startAdvertising() {
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->addServiceUUID(BLEUUID((uint16_t)0x180F));
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections
     pAdvertising->setMinPreferred(0x12);
     BLEDevice::startAdvertising();
-    DebugLog::log("BLE: advertising started (name='Ersa Wearable', svc=%s)", SERVICE_UUID);
+    DebugLog::log("BLE: advertising started (name='Ersa Wearable', addr=%s)", getDeviceAddress());
 }
 
 void Esp32Bluetooth::stopAdvertising() {
     BLEDevice::stopAdvertising();
+}
+
+const char* Esp32Bluetooth::getDeviceName() const {
+    return "Ersa Wearable";
+}
+
+const char* Esp32Bluetooth::getDeviceAddress() const {
+    static char s_addrBuf[24] = "00:00:00:00:00:00";
+    std::string s = BLEDevice::getAddress().toString();
+    if (!s.empty()) {
+        strncpy(s_addrBuf, s.c_str(), sizeof(s_addrBuf) - 1);
+        s_addrBuf[sizeof(s_addrBuf) - 1] = '\0';
+    }
+    return s_addrBuf;
 }
 
 bool Esp32Bluetooth::isConnected() const {
@@ -266,6 +310,8 @@ Result<void> Esp32Bluetooth::init() { return Result<void>(); }
 void Esp32Bluetooth::startAdvertising() {}
 void Esp32Bluetooth::stopAdvertising() {}
 bool Esp32Bluetooth::isConnected() const { return false; }
+const char* Esp32Bluetooth::getDeviceName() const { return "Ersa Wearable"; }
+const char* Esp32Bluetooth::getDeviceAddress() const { return "24:DC:C3:01:23:45"; }
 
 void Esp32Bluetooth::setCallCallback(BleCallCallback cb, void* userData) {
     callCb_ = cb;

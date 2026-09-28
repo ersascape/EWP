@@ -36,6 +36,8 @@ public:
     virtual void startAdvertising() = 0;
     virtual void stopAdvertising() = 0;
     virtual bool isConnected() const = 0;
+    virtual const char* getDeviceName() const = 0;
+    virtual const char* getDeviceAddress() const = 0;
 
     // Callbacks for events arriving from phone
     virtual void setCallCallback(BleCallCallback cb, void* userData) = 0;

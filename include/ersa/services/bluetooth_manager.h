@@ -30,6 +30,9 @@ public:
     Result<void> init();
 
     bool isConnected() const;
+    const char* getDeviceName() const;
+    const char* getDeviceAddress() const;
+    void restartAdvertising();
 
     // Call state & telephony actions
     CallState getCallState() const { return callState_; }

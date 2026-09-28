@@ -14,6 +14,8 @@ public:
     void startAdvertising() override;
     void stopAdvertising() override;
     bool isConnected() const override;
+    const char* getDeviceName() const override;
+    const char* getDeviceAddress() const override;
 
     void setCallCallback(BleCallCallback cb, void* userData) override;
     void setMediaCallback(BleMediaCallback cb, void* userData) override;

@@ -4,6 +4,7 @@
 #include "core/net_sync.h"
 #include "fonts/misans_fonts.h"
 #include "ersa/config/ui_strings.h"
+#include "ersa/services/bluetooth_manager.h"
 #include <Arduino.h>
 
 namespace WatchfaceClock {
@@ -97,6 +98,35 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
              monthsLower[mon], unsigned(time.day()),
              getOrdinalSuffix(time.day()), unsigned(time.year()));
 
+    // 3a. Above Date Complication: Call status or Now Playing metadata
+    auto& bleMgr = ersa::services::BluetoothManager::instance();
+    auto callState = bleMgr.getCallState();
+    if (callState == ersa::services::CallState::Incoming) {
+        char callBuf[32];
+        const char* caller = bleMgr.getCallerName();
+        snprintf(callBuf, sizeof(callBuf), "call: %s", (caller && caller[0]) ? caller : "unknown");
+        if (strlen(callBuf) > 20) {
+            callBuf[17] = '.'; callBuf[18] = '.'; callBuf[19] = '.'; callBuf[20] = '\0';
+        }
+        drawRightAlignedText(display, callBuf, 184, 150, &MiSansLatin_Bold8pt7b);
+    } else if (callState == ersa::services::CallState::Active) {
+        char callBuf[32];
+        uint32_t sec = bleMgr.getCallDurationSec();
+        snprintf(callBuf, sizeof(callBuf), "in call %02u:%02u", unsigned(sec / 60), unsigned(sec % 60));
+        drawRightAlignedText(display, callBuf, 184, 150, &MiSansLatin_Bold8pt7b);
+    } else {
+        const char* title = bleMgr.getMediaTitle();
+        if (title && title[0] != '\0' && strcmp(title, "No Media") != 0) {
+            char mediaBuf[32];
+            const bool playing = bleMgr.isPlaying();
+            snprintf(mediaBuf, sizeof(mediaBuf), "%s %s", playing ? ">" : "||", title);
+            if (strlen(mediaBuf) > 20) {
+                mediaBuf[17] = '.'; mediaBuf[18] = '.'; mediaBuf[19] = '.'; mediaBuf[20] = '\0';
+            }
+            drawRightAlignedText(display, mediaBuf, 184, 150, &MiSansLatin_Regular8pt7b);
+        }
+    }
+
     drawRightAlignedText(display, daysLower[dow], 184, 168, &MiSansLatin_Regular8pt7b);
     drawRightAlignedText(display, dateBuf, 184, 184, &MiSansLatin_Regular8pt7b);
 
@@ -110,6 +140,10 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(leftX, 184);
         display.print(ersa::strings::MSG_LOW_BATT);
+    } else if (bleMgr.isConnected()) {
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(leftX, 184);
+        display.print("ble on");
     }
 
     display.setTextColor(1);    // 1 = GxEPD_WHITE

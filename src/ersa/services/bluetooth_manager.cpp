@@ -16,9 +16,33 @@ static uint32_t host_millis() {
 namespace ersa {
 namespace services {
 
+class DummyBle : public hal::IBluetooth {
+public:
+    Result<void> init() override { return Result<void>(); }
+    void startAdvertising() override {}
+    void stopAdvertising() override {}
+    bool isConnected() const override { return false; }
+    void setCallCallback(hal::BleCallCallback, void*) override {}
+    void setMediaCallback(hal::BleMediaCallback, void*) override {}
+    void setConnectionCallback(hal::BleConnectionCallback, void*) override {}
+    void acceptCall() override {}
+    void rejectCall() override {}
+    void hangupCall() override {}
+    void dial(const char*) override {}
+    void mediaCommand(hal::BleMediaAction) override {}
+    const char* getDeviceName() const override { return "Ersa Wearable"; }
+    const char* getDeviceAddress() const override { return "00:00:00:00:00:00"; }
+};
+
 static BluetoothManager* s_instance = nullptr;
 
 BluetoothManager& BluetoothManager::instance() {
+    if (!s_instance) {
+        static DummyBle s_dummyBle;
+        static events::EventBus s_dummyBus;
+        static BluetoothManager s_dummy(s_dummyBle, s_dummyBus);
+        return s_dummy;
+    }
     return *s_instance;
 }
 
@@ -45,6 +69,19 @@ Result<void> BluetoothManager::init() {
 
 bool BluetoothManager::isConnected() const {
     return ble_.isConnected();
+}
+
+const char* BluetoothManager::getDeviceName() const {
+    return ble_.getDeviceName();
+}
+
+const char* BluetoothManager::getDeviceAddress() const {
+    return ble_.getDeviceAddress();
+}
+
+void BluetoothManager::restartAdvertising() {
+    ble_.stopAdvertising();
+    ble_.startAdvertising();
 }
 
 uint32_t BluetoothManager::getCallDurationSec() const {

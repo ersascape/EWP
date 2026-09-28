@@ -13,6 +13,7 @@ const char* const labels[static_cast<size_t>(Item::Count)] = {
     ersa::strings::APP_TITLE_CLOCK,
     ersa::strings::APP_TITLE_NOW_PLAYING,
     ersa::strings::APP_TITLE_CALLS,
+    ersa::strings::APP_TITLE_PAIRING,
     ersa::strings::APP_TITLE_CALENDAR,
     ersa::strings::APP_TITLE_AGENDA,
     ersa::strings::APP_TITLE_TASKS,
@@ -67,15 +68,15 @@ void render(Adafruit_GFX& display, bool full) {
 
     display.setTextColor(1);
 
-    constexpr int16_t startY = 38;
-    constexpr int16_t rowHeight = 18;
+    constexpr int16_t startY = 36;
+    constexpr int16_t rowHeight = 16;
 
     for (uint8_t i = 0; i < static_cast<uint8_t>(Item::Count); ++i) {
         const int16_t itemY = startY + i * rowHeight;
         const bool isSelected = (i == static_cast<uint8_t>(currentSelection));
 
         if (isSelected) {
-            display.fillRoundRect(14, itemY - 13, 172, 17, 3, 1);
+            display.fillRoundRect(14, itemY - 12, 172, 15, 3, 1);
             display.setTextColor(0); // Black text on white pill
             display.setFont(&MiSansLatin_Bold8pt7b);
             display.setCursor(24, itemY);

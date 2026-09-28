@@ -14,6 +14,8 @@ public:
     void startAdvertising() override { advertising_ = true; }
     void stopAdvertising() override { advertising_ = false; }
     bool isConnected() const override { return connected_; }
+    const char* getDeviceName() const override { return "Ersa Wearable"; }
+    const char* getDeviceAddress() const override { return "AA:BB:CC:11:22:33"; }
 
     void setCallCallback(hal::BleCallCallback cb, void* userData) override {
         callCb_ = cb;
