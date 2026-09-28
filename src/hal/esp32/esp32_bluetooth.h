@@ -14,6 +14,8 @@ public:
     void startAdvertising() override;
     void stopAdvertising() override;
     bool isConnected() const override;
+    bool isAdvertising() const override;
+    void tick() override;
     const char* getDeviceName() const override;
     const char* getDeviceAddress() const override;
 
@@ -22,6 +24,10 @@ public:
     void setConnectionCallback(BleConnectionCallback cb, void* userData) override;
     void setNotificationCallback(BleNotificationCallback cb, void* userData) override;
 
+    bool supportsDial() const override;
+    bool supportsHangup() const override;
+    bool notificationsReady() const override;
+    bool mediaReady() const override;
     void acceptCall() override;
     void rejectCall() override;
     void hangupCall() override;
@@ -30,6 +36,7 @@ public:
     void mediaCommand(BleMediaAction action) override;
 
 private:
+    void beginAdvertising();
     class Impl;
     Impl* pImpl_{nullptr};
 

@@ -2,6 +2,7 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/app/application_manager.h"
 #include "fonts/misans_fonts.h"
+#include "ui/text_layout.h"
 #include "core/debug_log.h"
 #include <Arduino.h>
 
@@ -39,8 +40,7 @@ void printWrapped(Adafruit_GFX& display, const char* text, int16_t x, int16_t st
         memcpy(lineBuf, p, copyLen);
         lineBuf[copyLen] = '\0';
 
-        display.setCursor(x, startY + line * lineSpacing);
-        display.print(lineBuf);
+        WatchText::line(display, lineBuf, x, startY + line * lineSpacing, 164);
         line++;
 
         p += printLen;
@@ -63,9 +63,21 @@ bool onButton(Buttons::Event event) {
             DebugLog::log("NOTIF: Next notification -> index %u/%u", unsigned(currentIndex + 1), unsigned(total));
             return true;
         }
-    } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong || event == Buttons::Event::Home) {
-        // B2 = Dismiss back to clock
-        DebugLog::log("NOTIF: Dismiss -> back to clock");
+    } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionAlt) {
+        if (total == 0) {
+            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
+            return true;
+        }
+        if (currentIndex >= total) currentIndex = 0;
+        const uint32_t uid = bleMgr.getNotification(currentIndex).uid;
+        if (bleMgr.dismissNotification(currentIndex)) {
+            DebugLog::log("NOTIF: Dismissed local uid=%lu", (unsigned long)uid);
+            if (currentIndex >= bleMgr.getNotificationCount() && currentIndex > 0) --currentIndex;
+            if (bleMgr.getNotificationCount() == 0)
+                ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
+        }
+        return true;
+    } else if (event == Buttons::Event::ActionLong || event == Buttons::Event::Home) {
         ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
         return true;
     }
@@ -82,27 +94,14 @@ void render(Adafruit_GFX& display, bool full) {
     display.setTextColor(1); // White
 
     if (total == 0) {
-        // Empty state
         display.setFont(&MiSansLatin_Bold10pt7b);
         display.setCursor(18, 24);
         display.print("notifications");
-
-        display.drawRoundRect(14, 38, 172, 114, 6, 1);
-
         display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(32, 80);
-        display.print("no new messages");
-        display.setCursor(32, 102);
-        display.print("alerts from iphone");
-        display.setCursor(32, 120);
-        display.print("will appear here");
-
-        // Footer button
-        display.fillRoundRect(14, 162, 172, 26, 4, 1);
-        display.setTextColor(0);
-        display.setFont(&MiSansLatin_Bold8pt7b);
-        display.setCursor(44, 179);
-        display.print("B2: BACK TO CLOCK");
+        WatchText::line(display, "no new alerts", 18, 89, 164);
+        WatchText::line(display, "from your iphone", 18, 114, 164);
+        display.drawFastHLine(18, 135, 164, 1);
+        WatchText::line(display, "b2: back", 18, 186, 164);
         return;
     }
 
@@ -126,34 +125,26 @@ void render(Adafruit_GFX& display, bool full) {
         display.print(countBuf);
     }
 
-    // 2. Notification Box
-    display.drawRoundRect(14, 36, 172, 118, 6, 1);
-    display.drawRoundRect(15, 37, 170, 116, 5, 1);
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    const char* source = (notif.app[0] && strcmp(notif.app, notif.title) != 0)
+        ? notif.app : "from iphone";
+    WatchText::line(display, source, 18, 47, 164);
 
-    // Title / Sender
     display.setFont(&MiSansLatin_Bold10pt7b);
-    display.setCursor(24, 58);
-    display.print((notif.title && notif.title[0]) ? notif.title : "Notification");
-
-    // Subtle divider
-    display.drawFastHLine(24, 68, 152, 1);
+    WatchText::line(display, notif.title[0] ? notif.title : "notification", 18, 82, 164);
+    display.drawFastHLine(18, 96, 164, 1);
 
     // Message Body wrapped
     display.setFont(&MiSansLatin_Regular8pt7b);
-    printWrapped(display, notif.message, 24, 88, 16, 4, 21);
+    printWrapped(display, notif.message, 18, 115, 17, 3, 22);
 
-    // 3. Action pill button
-    display.fillRoundRect(14, 162, 172, 26, 4, 1);
-    display.setTextColor(0);
-    display.setFont(&MiSansLatin_Bold8pt7b);
-
+    display.setFont(&MiSansLatin_Regular8pt7b);
     if (total > 1) {
-        display.setCursor(24, 179);
-        display.print("B1: NEXT   B2: DISMISS");
+        WatchText::line(display, "b1: next", 18, 168, 164);
     } else {
-        display.setCursor(50, 179);
-        display.print("B2: DISMISS");
+        WatchText::line(display, "hold b1: back", 18, 168, 164);
     }
+    WatchText::line(display, "b2: dismiss", 18, 186, 164);
 }
 
 } // namespace AppNotifications

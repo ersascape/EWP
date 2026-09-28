@@ -39,6 +39,8 @@ enum class EventType : uint16_t {
     MediaStateChanged,
 
     NotificationReceived,
+    NotificationRemoved,
+    NotificationsCleared,
     Custom
 };
 

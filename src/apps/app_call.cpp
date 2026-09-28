@@ -2,6 +2,7 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/app/application_manager.h"
 #include "fonts/misans_fonts.h"
+#include "ui/text_layout.h"
 #include "core/debug_log.h"
 #include <Arduino.h>
 
@@ -17,6 +18,7 @@ bool isCallActiveOrIncoming() {
 bool onButton(Buttons::Event event) {
     auto& bleMgr = ersa::services::BluetoothManager::instance();
     auto state = bleMgr.getCallState();
+    if (event == Buttons::Event::None) return false;
 
     if (state == ersa::services::CallState::Incoming) {
         if (event == Buttons::Event::Next) {
@@ -24,15 +26,18 @@ bool onButton(Buttons::Event event) {
             DebugLog::log("CALL: B1 pressed -> Accept call");
             bleMgr.acceptCall();
             return true;
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong || event == Buttons::Event::Home) {
+        } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
             // B2 = DECLINE / HANG UP Call
             DebugLog::log("CALL: B2 pressed -> Decline call");
             bleMgr.rejectCall();
             ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
+        } else if (event == Buttons::Event::Home) {
+            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
+            return true;
         }
     } else if (state == ersa::services::CallState::Active) {
-        if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
+        if ((event == Buttons::Event::Action || event == Buttons::Event::ActionLong) && bleMgr.canHangup()) {
             // B2 = HANG UP Call
             DebugLog::log("CALL: B2 pressed -> Hang up call");
             bleMgr.hangupCall();
@@ -46,7 +51,7 @@ bool onButton(Buttons::Event event) {
     } else if (state == ersa::services::CallState::Idle) {
         if (event == Buttons::Event::Next) {
             // B1 = Quick dial top recent call
-            if (bleMgr.getRecentCallCount() > 0) {
+            if (bleMgr.canDial() && bleMgr.getRecentCallCount() > 0) {
                 DebugLog::log("CALL: B1 pressed -> Quick dial recent %s", bleMgr.getRecentCall(0).name);
                 bleMgr.dialRecent(0);
                 return true;
@@ -65,131 +70,64 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display) {
-    auto& bleMgr = ersa::services::BluetoothManager::instance();
-    auto state = bleMgr.getCallState();
-    const char* caller = bleMgr.getCallerName();
-    const char* number = bleMgr.getCallerNumber();
+    auto& ble = ersa::services::BluetoothManager::instance();
+    const auto state = ble.getCallState();
+    using ersa::services::CallState;
+    display.fillScreen(0);
+    display.setTextColor(1);
+    display.setTextWrap(false);
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    display.setCursor(18, 24);
+    display.print("calls");
+    display.setFont(&MiSansLatin_Regular8pt7b);
 
-    display.fillScreen(0);   // Solid black
-    display.setTextColor(1); // White
-
-    if (state == ersa::services::CallState::Incoming) {
-        // 1. Header
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 26);
-        display.print("incoming call...");
-
-        // Animated / blinking call badge icon outline
-        display.drawRoundRect(18, 40, 164, 76, 6, 1);
-        display.drawRoundRect(19, 41, 162, 74, 5, 1);
-
-        // Caller name
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(30, 68);
-        display.print((caller && caller[0]) ? caller : "Unknown");
-
-        // Number
-        if (number && number[0]) {
+    if (state == CallState::Idle) {
+        WatchText::line(display, ble.isConnected() ? "recent calls" : "connect from status", 18, 47, 166);
+        const size_t count = ble.getRecentCallCount();
+        if (!count) {
+            display.setFont(&MiSansLatin_Regular10pt7b);
+            WatchText::line(display, "no recent calls", 18, 85, 166);
             display.setFont(&MiSansLatin_Regular8pt7b);
-            display.setCursor(30, 92);
-            display.print(number);
+            WatchText::line(display, "incoming calls appear here", 18, 111, 166);
         }
-
-        // 2. Action buttons
-        // Top button B1: ACCEPT (Filled White Badge)
-        display.fillRoundRect(18, 130, 164, 26, 4, 1);
-        display.setTextColor(0); // Black text on white
-        display.setFont(&MiSansLatin_Bold8pt7b);
-        display.setCursor(30, 147);
-        display.print("B1: ACCEPT CALL");
-
-        // Bottom button B2: DECLINE (Outline Badge)
-        display.setTextColor(1); // White text
-        display.drawRoundRect(18, 162, 164, 26, 4, 1);
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(30, 179);
-        display.print("B2: DECLINE / HANG UP");
-
-    } else if (state == ersa::services::CallState::Active) {
-        // Header
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 26);
-        display.print("in call");
-
-        // Call duration
-        uint32_t sec = bleMgr.getCallDurationSec();
-        char durBuf[16];
-        snprintf(durBuf, sizeof(durBuf), "%02u:%02u", unsigned(sec / 60), unsigned(sec % 60));
-        display.setCursor(140, 26);
-        display.print(durBuf);
-
-        // Caller box
-        display.drawRoundRect(18, 44, 164, 72, 6, 1);
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(30, 74);
-        display.print((caller && caller[0]) ? caller : "Connected");
-
-        if (number && number[0]) {
+        for (size_t i = 0; i < count && i < 2; ++i) {
+            const auto& call = ble.getRecentCall(i);
+            const int16_t y = 60 + i * 48;
+            display.setFont(&MiSansLatin_Bold8pt7b);
+            WatchText::line(display, call.name, 18, y + 17, 164);
             display.setFont(&MiSansLatin_Regular8pt7b);
-            display.setCursor(30, 98);
-            display.print(number);
+            WatchText::line(display, call.number, 18, y + 35, 164);
+            display.drawFastHLine(18, y + 43, 164, 1);
         }
+        WatchText::line(display, ble.canDial() && count ? "b1: call most recent" : "call from your phone", 18, 168, 166);
+        WatchText::line(display, "b2: back", 18, 186, 166);
+        return;
+    }
 
-        // Hang Up Button B2
-        display.fillRoundRect(18, 154, 164, 28, 4, 1);
-        display.setTextColor(0); // Black text on white badge
-        display.setFont(&MiSansLatin_Bold8pt7b);
-        display.setCursor(36, 172);
-        display.print("B2: HANG UP");
-
-    } else if (state == ersa::services::CallState::Idle) {
-        // Idle screen: Recent calls list
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(18, 24);
-        display.print("recent calls");
-
-        size_t count = bleMgr.getRecentCallCount();
-        if (count == 0) {
-            display.setFont(&MiSansLatin_Regular8pt7b);
-            display.setCursor(18, 60);
-            display.print("no recent calls");
-        } else {
-            constexpr int16_t startY = 52;
-            constexpr int16_t rowH = 26;
-            for (size_t i = 0; i < count && i < 4; ++i) {
-                const auto& call = bleMgr.getRecentCall(i);
-                int16_t y = startY + static_cast<int16_t>(i * rowH);
-
-                display.setFont(&MiSansLatin_Bold8pt7b);
-                display.setCursor(18, y);
-                display.print(call.name);
-
-                display.setFont(&MiSansLatin_Regular8pt7b);
-                display.setCursor(94, y);
-                display.print(call.number);
-            }
-        }
-
-        // Footer
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 170);
-        display.print("b1: dial top contact");
-        display.setCursor(18, 188);
-        display.print("b2: return to drawer");
-
+    WatchText::line(display, state == CallState::Incoming ? "incoming call" :
+                    state == CallState::Active ? "in call" : "ringing finished", 18, 47, 166);
+    display.setFont(&MiSansLatin_Bold10pt7b);
+    WatchText::line(display, ble.getCallerName()[0] ? ble.getCallerName() : "unknown caller", 18, 89, 164);
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    WatchText::line(display, ble.getCallerNumber(), 18, 114, 164);
+    display.drawFastHLine(18, 135, 164, 1);
+    if (state == CallState::Active) {
+        char duration[20];
+        const uint32_t seconds = ble.getCallDurationSec();
+        snprintf(duration, sizeof(duration), "%02u:%02u", unsigned(seconds / 60), unsigned(seconds % 60));
+        WatchText::line(display, duration, 18, 153, 164);
+    } else if (state == CallState::Incoming) {
+        WatchText::line(display, "hold b1: back", 18, 153, 164);
+    }
+    if (state == CallState::Incoming) {
+        WatchText::line(display, "b1: answer", 18, 168, 166);
+        WatchText::line(display, "b2: decline", 18, 186, 166);
+    } else if (state == CallState::Active) {
+        WatchText::line(display, ble.canHangup() ? "b2: end call" : "manage call on phone", 18, 168, 166);
+        WatchText::line(display, "hold b1: back", 18, 186, 166);
     } else {
-        // Call ended screen
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 26);
-        display.print("call ended");
-
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(18, 80);
-        display.print((caller && caller[0]) ? caller : "Call Finished");
-
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 180);
-        display.print("press any button to return");
+        WatchText::line(display, "check call on your phone", 18, 168, 166);
+        WatchText::line(display, "press a button to return", 18, 186, 166);
     }
 }
 

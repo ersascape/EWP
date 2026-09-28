@@ -5,6 +5,7 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -I include -I src -I tests
 
 TEST_SRCS = \
 	tests/main_test.cpp \
+	tests/apple_protocol_test.cpp \
 	src/ersa/events/event_bus.cpp \
 	src/ersa/app/application_manager.cpp \
 	src/ersa/services/time_service.cpp \
@@ -27,8 +28,8 @@ firmware:
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-$(TEST_BIN): $(TEST_SRCS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+$(TEST_BIN): $(TEST_SRCS) $(wildcard include/ersa/protocols/*.h)
+	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRCS)
 
 clean:
 	rm -f $(TEST_BIN)

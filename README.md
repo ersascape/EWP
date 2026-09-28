@@ -20,11 +20,17 @@ An open-source, modular embedded operating environment and minimalist smartwatch
   <em>Text Watchface &bull; App Drawer &bull; CalDAV Tasks &bull; CalDAV Agenda</em>
 </p>
 
+<p align="center">
+  <img src="docs/images/notification_call_media_simulation.png" width="600" alt="Simulated notification, incoming call, and now-playing screens" />
+</p>
+
+<p align="center"><em>Host-rendered 200×200 notification, call, and now-playing screens</em></p>
+
 ---
 
 ## Ersa Wearable Platform — Layered Architecture
 
-Ersa Wearable Platform is designed as a modular, low-power embedded operating environment. The architecture is decoupled so system services, event management, and applications are completely hardware-independent:
+Ersa Wearable Platform is a modular embedded watch environment. Its core event and service interfaces are portable; ESP32 BLE transport and the current screen renderers still depend on their platform libraries:
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
@@ -83,6 +89,14 @@ Ersa Wearable Platform is designed as a modular, low-power embedded operating en
   - Launch `ErsaWatch-Config` AP from the watch drawer to configure Wi-Fi credentials, CalDAV server, calendar presets (`murena-team`, `personal`, `tasks`), timezone, and time format (12h / 24h).
 - **Battery Sensing**:
   - Hardware ADC battery monitoring on GPIO2 (A0) with multi-sample averaging and lithium discharge curve mapping.
+- **iPhone ANCS and AMS**:
+  - Automatic Apple service discovery after BLE authentication, with separate notification and call queues to handle the initial notification burst.
+  - ANCS notification attributes are reassembled across BLE fragments and matched to their notification UID. Added and modified notifications appear in watch history; B2 dismisses the selected alert locally.
+  - Incoming calls show caller information when ANCS provides it. B1 sends the available positive action; B2 sends the negative action. ANCS does not provide a complete active-call or dial interface.
+  - AMS shows track title, artist, and playback state, and sends supported play/pause and track controls. Call, media, and notification screens share an open monochrome layout.
+  - Status reports connection and Apple service readiness. B1 schedules BLE advertising again when disconnected; advertising start is checked and retried after a disconnect.
+- **Portable Protocol Decoders**:
+  - ANCS and AMS byte decoding is independent of the ESP32 BLE transport. The current `IBluetooth` provider boundary can support future Android or Linux companions; MPRIS and Android support are not included yet.
 
 ---
 
@@ -119,7 +133,12 @@ Ersa Wearable Platform is designed as a modular, low-power embedded operating en
 | **Agenda** | Scroll event cards | Sync CalDAV events | Return to Drawer | Sync CalDAV |
 | **Tasks** | Scroll checklist items | Toggle task (`[x]`) | Return to Drawer | Sync CalDAV |
 | **Hotspot** | Refresh status | Start / Stop AP | Return to Drawer | Sync NTP |
-| **Status** | Refresh sensors | Sync NTP Time | Return to Drawer | — |
+| **Status** | Restart BLE advertising when disconnected | Sync NTP Time | Return to Drawer | Sync NTP Time |
+| **Notifications** | Next alert | Dismiss selected alert from watch | Return to Clock | Return to Clock |
+| **Incoming call** | Answer | Decline | Return to Clock | Decline |
+| **Now playing** | Next track | Play / pause | Return to Drawer | Previous track |
+
+Notification dismissal removes the selected alert from the watch's history. ANCS does not provide a general command to remove an arbitrary notification from iOS. Later updates for a locally dismissed UID stay hidden until iOS removes that UID or a new ANCS session begins.
 
 ---
 
@@ -134,7 +153,8 @@ Ersa-W1/
 │   │   ├── board/                 # BSP configurations & interfaces
 │   │   ├── config/                # Centralized system defaults & UI strings
 │   │   ├── events/                # EventBus & typed Event definitions
-│   │   ├── hal/                   # Hardware abstraction interfaces (IDisplay, IRtc, etc.)
+│   │   ├── hal/                   # Hardware abstraction interfaces (IDisplay, IRtc, Bluetooth, etc.)
+│   │   ├── protocols/             # Portable ANCS and AMS decoding
 │   │   ├── services/              # System services (Time, Power, Network, Storage)
 │   │   ├── ui/                    # Canvas drawing abstractions
 │   │   └── system.h               # System facade
@@ -168,11 +188,13 @@ Ersa-W1/
 │   └── main.cpp                   # System boot & execution loop
 ├── tests/
 │   ├── mocks/                     # Mock HAL devices for host unit testing
-│   └── main_test.cpp              # 10 comprehensive unit test suites
+│   ├── ui_preview/                # Host stubs and 200×200 screen simulation
+│   └── main_test.cpp              # Core unit test suites
 ├── platformio.ini                 # PlatformIO build configuration
 ├── Makefile                       # Top-level makefile (make firmware / make test)
 └── scripts/
-    └── pio.sh                     # Self-contained PlatformIO CLI bootstrap
+    ├── pio.sh                     # Self-contained PlatformIO CLI bootstrap
+    └── render_ui_preview.sh       # Adafruit GFX + ImageMagick screen preview
 ```
 
 ---
@@ -180,7 +202,7 @@ Ersa-W1/
 ## Build & Test Workflow
 
 ### 1. Run Unit Tests (Host GCC)
-Run the 10 core unit test suites on your development host in < 0.5s:
+Run the host tests:
 ```bash
 make test
 ```
@@ -194,8 +216,6 @@ make firmware
 ### 3. Flash to Device
 Connect the Ampere Works T1E via USB-C and upload:
 ```bash
-make flash
-# Or via PlatformIO helper:
 bash scripts/pio.sh run --target upload
 ```
 
@@ -203,6 +223,16 @@ bash scripts/pio.sh run --target upload
 ```bash
 bash scripts/pio.sh device monitor
 ```
+
+### 5. Simulate UI Screens with ImageMagick
+
+After `make firmware` has installed Adafruit GFX, run this on a host with `g++` and ImageMagick (`magick`):
+
+```bash
+./scripts/render_ui_preview.sh
+```
+
+The script compiles the production notification, call, and now-playing renderers against Adafruit GFX's 200×200 host canvas. ImageMagick joins and doubles the pixel size for the [preview](docs/images/notification_call_media_simulation.png). It renders simulated notification, caller, and track data; no device or BLE connection is needed. These previews verify layout, while device testing is still needed for button timing and e-paper refresh.
 
 ---
 

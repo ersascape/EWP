@@ -3,6 +3,7 @@
 
 #if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
 #include <Arduino.h>
+#include <atomic>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -20,12 +21,17 @@ namespace hal {
 
 class BleSecCallbacks : public BLESecurityCallbacks {
 public:
+    using AuthCallback = void (*)(const esp_ble_auth_cmpl_t&, void*);
+    BleSecCallbacks(AuthCallback callback, void* user) : callback_(callback), user_(user) {}
+    AuthCallback callback_;
+    void* user_;
     uint32_t onPassKeyRequest() override { return 123456; }
     void onPassKeyNotify(uint32_t pass_key) override { (void)pass_key; }
     bool onConfirmPIN(uint32_t pass_key) override { (void)pass_key; return true; }
     bool onSecurityRequest() override { return true; }
     void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
         DebugLog::log("BLE: Auth complete success=%d fail_reason=0x%x", cmpl.success, cmpl.fail_reason);
+        if (callback_) callback_(cmpl, user_);
     }
 };
 
@@ -38,31 +44,70 @@ public:
     BLECharacteristic* pMediaChar_{nullptr};
     BLECharacteristic* pRecentsChar_{nullptr};
     Esp32AppleClient appleClient_;
-    bool connected_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> advertising_{false}, advertisingPending_{false};
+    std::atomic<bool> companionCalls_{false}, companionMedia_{false};
     bool initialized_{false};
+    std::atomic<uint32_t> advertiseAfterMs_{0};
+    static Impl*& current() { static Impl* instance = nullptr; return instance; }
+    static void gapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
+        auto* self = current();
+        if (!self || !param) return;
+        if (event == ESP_GAP_BLE_ADV_START_COMPLETE_EVT) {
+            const bool success = param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS;
+            self->advertising_ = success;
+            self->advertisingPending_ = !success && !self->connected_;
+            DebugLog::log("BLE: advertising start %s status=0x%x", success ? "ok" : "failed",
+                          unsigned(param->adv_start_cmpl.status));
+        } else if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT) {
+            self->advertising_ = false;
+        }
+    }
+    esp_bd_addr_t peer_{};
+    esp_ble_addr_type_t peerType_{BLE_ADDR_TYPE_RANDOM};
+    static void authenticated(const esp_ble_auth_cmpl_t& auth, void* user) {
+        auto* self = static_cast<Impl*>(user);
+        if (self->connected_) {
+            self->appleClient_.authenticationComplete(auth.success);
+            if (auth.success) DebugLog::log("BLE: encrypted link ready; Apple worker released");
+        }
+        // Do not compare an identity address with a potentially private connection
+        // address. The current peripheral connection owns this auth completion.
+    }
 
     void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override {
         (void)pServer;
         connected_ = true;
+        advertising_ = false;
+        advertisingPending_ = false;
         DebugLog::log("BLE: Central connected");
         if (param) {
-            esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
-            appleClient_.startDiscovery(param->connect.remote_bda, param->connect.ble_addr_type);
+            memcpy(peer_, param->connect.remote_bda, sizeof(peer_));
+            peerType_ = param->connect.ble_addr_type;
+            // BLEDevice already requests encryption before this callback.
+            // A second request here produced "earlier enc was not done".
+            DebugLog::log("BLE: Apple discovery scheduled (addrType=%u)", unsigned(peerType_));
+            appleClient_.startDiscovery(peer_, peerType_);
         }
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(true, parent_->connUserData_);
         }
     }
 
-    void onDisconnect(BLEServer* pServer) override {
+    void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override {
         (void)pServer;
         connected_ = false;
+        advertising_ = false;
+        advertisingPending_ = true;
+        advertiseAfterMs_ = millis() + 750;
+        companionCalls_ = false; companionMedia_ = false;
         appleClient_.stop();
-        DebugLog::log("BLE: Central disconnected, restarting advertising");
+        DebugLog::log("BLE: Central disconnected reason=0x%02x; restarting advertising", param ? unsigned(param->disconnect.reason) : 0);
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(false, parent_->connUserData_);
         }
-        BLEDevice::startAdvertising();
+        // BLEServer removes this connection only after callbacks return.
+        // Advertising from here can be rejected while the link still exists.
     }
 
     void onWrite(BLECharacteristic* pCharacteristic) override {
@@ -70,6 +115,7 @@ public:
         if (rxVal.empty()) return;
 
         if (pCharacteristic == pCallChar_) {
+            companionCalls_ = true;
             // First byte = action: 0=Incoming, 1=Answered, 2=Rejected, 3=Ended
             uint8_t actionByte = static_cast<uint8_t>(rxVal[0]);
             BleCallAction action = BleCallAction::Incoming;
@@ -105,6 +151,7 @@ public:
                 parent_->callCb_(action, caller, number, parent_->callUserData_);
             }
         } else if (pCharacteristic == pMediaChar_) {
+            companionMedia_ = true;
             // First byte: 1=Playing, 0=Paused
             bool playing = (static_cast<uint8_t>(rxVal[0]) == 1);
             char title[32] = "";
@@ -141,6 +188,7 @@ Esp32Bluetooth::Esp32Bluetooth() : pImpl_(new Impl()) {
 }
 
 Esp32Bluetooth::~Esp32Bluetooth() {
+    if (Impl::current() == pImpl_) Impl::current() = nullptr;
     delete pImpl_;
 }
 
@@ -150,6 +198,8 @@ Result<void> Esp32Bluetooth::init() {
     }
     DebugLog::log("BLE: initializing 'Ersa Wearable' BLE peripheral");
     BLEDevice::init("Ersa Wearable");
+    Impl::current() = pImpl_;
+    BLEDevice::setCustomGapHandler(&Impl::gapEvent);
 
     pImpl_->pServer_ = BLEDevice::createServer();
     pImpl_->pServer_->setCallbacks(pImpl_);
@@ -217,7 +267,7 @@ Result<void> Esp32Bluetooth::init() {
 
     // Configure BLE Security Bonding for native iOS Pairing & ANCS / AMS access
     BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
-    BLEDevice::setSecurityCallbacks(new BleSecCallbacks());
+    BLEDevice::setSecurityCallbacks(new BleSecCallbacks(&Impl::authenticated, pImpl_));
     BLESecurity* pSecurity = new BLESecurity();
     pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
     pSecurity->setCapability(ESP_IO_CAP_NONE);
@@ -229,6 +279,23 @@ Result<void> Esp32Bluetooth::init() {
 }
 
 void Esp32Bluetooth::startAdvertising() {
+    if (!pImpl_->initialized_ || pImpl_->connected_) return;
+    pImpl_->advertising_ = false;
+    pImpl_->advertisingPending_ = true;
+    pImpl_->advertiseAfterMs_ = millis() + 250;
+    DebugLog::log("BLE: advertising scheduled");
+}
+
+void Esp32Bluetooth::tick() {
+    if (!pImpl_->initialized_ || pImpl_->connected_ || pImpl_->advertising_ ||
+        !pImpl_->advertisingPending_ ||
+        int32_t(millis() - pImpl_->advertiseAfterMs_.load()) < 0) return;
+    pImpl_->advertiseAfterMs_ = millis() + 5000;
+    beginAdvertising();
+}
+
+void Esp32Bluetooth::beginAdvertising() {
+    if (pImpl_->connected_) return;
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
 
     // Primary Advertisement Data: Flags + ANCS 128-bit Service Solicitation (21 bytes <= 31 max)
@@ -250,14 +317,18 @@ void Esp32Bluetooth::startAdvertising() {
     pAdvertising->setScanResponseData(scanResponse);
 
     pAdvertising->setMinPreferred(0x06);
-    pAdvertising->setMinPreferred(0x12);
+    pAdvertising->setMaxPreferred(0x12);
     BLEDevice::startAdvertising();
-    DebugLog::log("BLE: advertising started with ANCS solicitation (name='Ersa Wearable', addr=%s)", getDeviceAddress());
+    DebugLog::log("BLE: advertising requested with ANCS solicitation (addr=%s)", getDeviceAddress());
 }
 
 void Esp32Bluetooth::stopAdvertising() {
+    pImpl_->advertisingPending_ = false;
+    pImpl_->advertising_ = false;
     BLEDevice::stopAdvertising();
 }
+
+bool Esp32Bluetooth::isAdvertising() const { return pImpl_->advertising_; }
 
 const char* Esp32Bluetooth::getDeviceName() const {
     return "Ersa Wearable";
@@ -306,10 +377,18 @@ void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* u
     }
 }
 
+bool Esp32Bluetooth::supportsDial() const { return pImpl_->connected_ && pImpl_->companionCalls_; }
+bool Esp32Bluetooth::supportsHangup() const { return supportsDial(); }
+bool Esp32Bluetooth::notificationsReady() const { return pImpl_->connected_ && pImpl_->appleClient_.isAncsActive(); }
+bool Esp32Bluetooth::mediaReady() const { return pImpl_->connected_ && (pImpl_->appleClient_.isAmsActive() || pImpl_->companionMedia_); }
+
 void Esp32Bluetooth::acceptCall() {
     DebugLog::log("BLE: Command -> ACCEPT CALL");
     if (pImpl_) {
-        pImpl_->appleClient_.acceptCall();
+        if (pImpl_->appleClient_.isAncsActive()) {
+            pImpl_->appleClient_.acceptCall();
+            return;
+        }
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x01; // Accept
             pImpl_->pCallChar_->setValue(&val, 1);
@@ -321,7 +400,10 @@ void Esp32Bluetooth::acceptCall() {
 void Esp32Bluetooth::rejectCall() {
     DebugLog::log("BLE: Command -> REJECT CALL");
     if (pImpl_) {
-        pImpl_->appleClient_.rejectCall();
+        if (pImpl_->appleClient_.isAncsActive()) {
+            pImpl_->appleClient_.rejectCall();
+            return;
+        }
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x02; // Reject
             pImpl_->pCallChar_->setValue(&val, 1);
@@ -333,7 +415,7 @@ void Esp32Bluetooth::rejectCall() {
 void Esp32Bluetooth::hangupCall() {
     DebugLog::log("BLE: Command -> HANG UP CALL");
     if (pImpl_) {
-        pImpl_->appleClient_.rejectCall();
+        if (!supportsHangup()) return;
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x02; // Hangup
             pImpl_->pCallChar_->setValue(&val, 1);
@@ -344,7 +426,7 @@ void Esp32Bluetooth::hangupCall() {
 
 void Esp32Bluetooth::dial(const char* number) {
     DebugLog::log("BLE: Command -> DIAL '%s'", number ? number : "");
-    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_) {
+    if (supportsDial() && pImpl_->pCallChar_ && pImpl_->connected_) {
         char buf[32];
         buf[0] = 0x03; // Dial command
         if (number) {
@@ -361,7 +443,10 @@ void Esp32Bluetooth::dial(const char* number) {
 void Esp32Bluetooth::mediaCommand(BleMediaAction action) {
     DebugLog::log("BLE: Command -> MEDIA ACTION %d", int(action));
     if (pImpl_) {
-        pImpl_->appleClient_.mediaCommand(action);
+        if (pImpl_->appleClient_.isAmsActive()) {
+            pImpl_->appleClient_.mediaCommand(action);
+            return;
+        }
         if (pImpl_->pMediaChar_ && pImpl_->connected_) {
             uint8_t val = static_cast<uint8_t>(action);
             pImpl_->pMediaChar_->setValue(&val, 1);
@@ -386,6 +471,9 @@ Result<void> Esp32Bluetooth::init() { return Result<void>(); }
 void Esp32Bluetooth::startAdvertising() {}
 void Esp32Bluetooth::stopAdvertising() {}
 bool Esp32Bluetooth::isConnected() const { return false; }
+bool Esp32Bluetooth::isAdvertising() const { return false; }
+void Esp32Bluetooth::tick() {}
+void Esp32Bluetooth::beginAdvertising() {}
 const char* Esp32Bluetooth::getDeviceName() const { return "Ersa Wearable"; }
 const char* Esp32Bluetooth::getDeviceAddress() const { return "24:DC:C3:01:23:45"; }
 
@@ -404,6 +492,11 @@ void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userD
     connUserData_ = userData;
 }
 
+bool Esp32Bluetooth::supportsDial() const { return false; }
+bool Esp32Bluetooth::supportsHangup() const { return false; }
+bool Esp32Bluetooth::notificationsReady() const { return false; }
+bool Esp32Bluetooth::mediaReady() const { return false; }
+void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* user) { notifCb_ = cb; notifUserData_ = user; }
 void Esp32Bluetooth::acceptCall() {}
 void Esp32Bluetooth::rejectCall() {}
 void Esp32Bluetooth::hangupCall() {}

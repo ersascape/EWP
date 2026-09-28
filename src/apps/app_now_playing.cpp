@@ -2,6 +2,7 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/app/application_manager.h"
 #include "fonts/misans_fonts.h"
+#include "ui/text_layout.h"
 #include "core/debug_log.h"
 #include <Arduino.h>
 
@@ -11,6 +12,8 @@ void begin() {}
 
 bool onButton(Buttons::Event event) {
     auto& bleMgr = ersa::services::BluetoothManager::instance();
+
+    if (event != Buttons::Event::Home && !bleMgr.mediaReady()) return false;
 
     if (event == Buttons::Event::Next) {
         // B1 Click = Next Track
@@ -41,59 +44,31 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display) {
-    auto& bleMgr = ersa::services::BluetoothManager::instance();
-    const bool playing = bleMgr.isPlaying();
-    const char* title = bleMgr.getMediaTitle();
-    const char* artist = bleMgr.getMediaArtist();
-    const bool connected = bleMgr.isConnected();
-
-    display.fillScreen(0);   // Solid black
-    display.setTextColor(1); // White
-
-    // 1. Header
+    auto& ble = ersa::services::BluetoothManager::instance();
+    const bool ready = ble.mediaReady();
+    const bool track = ready && ble.getMediaTitle()[0];
+    display.fillScreen(0);
+    display.setTextColor(1);
+    display.setTextWrap(false);
     display.setFont(&MiSansLatin_Bold10pt7b);
     display.setCursor(18, 24);
     display.print("now playing");
 
     display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(140, 24);
-    display.print(connected ? "ble on" : "ble idle");
+    WatchText::line(display, !ble.isConnected() ? "connect from status" :
+                    !ready ? "waiting for music service" :
+                    ble.isPlaying() ? "playing on phone" : "paused on phone", 18, 47, 166);
 
-    // 2. Center Card (Media info)
-    display.drawRoundRect(14, 40, 172, 100, 6, 1);
-
-    // Track Title
     display.setFont(&MiSansLatin_Bold10pt7b);
-    display.setCursor(24, 72);
-    display.print((title && title[0]) ? title : "No Track");
-
-    // Artist
+    WatchText::line(display, track ? ble.getMediaTitle() : "no track", 18, 89, 164);
     display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(24, 96);
-    display.print((artist && artist[0]) ? artist : "Select track on phone");
+    WatchText::line(display, track ? ble.getMediaArtist() : "play music on phone", 18, 114, 164);
+    display.drawFastHLine(18, 135, 164, 1);
+    WatchText::line(display, "hold b1: back", 18, 153, 164);
 
-    // Playback state indicator
-    if (playing) {
-        display.fillRoundRect(24, 110, 80, 20, 3, 1);
-        display.setTextColor(0); // Black on white
-        display.setFont(&MiSansLatin_Bold8pt7b);
-        display.setCursor(30, 124);
-        display.print("> PLAYING");
-    } else {
-        display.drawRoundRect(24, 110, 80, 20, 3, 1);
-        display.setTextColor(1); // White outline
-        display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(30, 124);
-        display.print("|| PAUSED");
-    }
-
-    // 3. Footer controls guide
-    display.setTextColor(1);
     display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(18, 170);
-    display.print("b1: next track");
-    display.setCursor(18, 188);
-    display.print("b2: play / pause");
+    WatchText::line(display, "b1: next / hold b2: prev", 18, 168, 166);
+    WatchText::line(display, ble.isPlaying() ? "b2: pause" : "b2: play", 18, 186, 166);
 }
 
 } // namespace AppNowPlaying

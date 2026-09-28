@@ -130,19 +130,19 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
     drawRightAlignedText(display, daysLower[dow], 184, 168, &MiSansLatin_Regular8pt7b);
     drawRightAlignedText(display, dateBuf, 184, 184, &MiSansLatin_Regular8pt7b);
 
-    // 4. Subtle, minimal status in bottom-left corner
+    // Keep status clear of the full-width date on the bottom row.
     constexpr int16_t leftX = 18;
     if (NetSync::isSyncing()) {
         display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(leftX, 184);
+        display.setCursor(leftX, 134);
         display.print(ersa::strings::MSG_SYNCING);
     } else if (Battery::isConnected() && Battery::percentage() <= 20) {
         display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(leftX, 184);
+        display.setCursor(leftX, 134);
         display.print(ersa::strings::MSG_LOW_BATT);
     } else if (bleMgr.isConnected()) {
         display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(leftX, 184);
+        display.setCursor(leftX, 134);
         display.print("ble on");
     }
 

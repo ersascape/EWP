@@ -36,8 +36,14 @@ public:
     BluetoothManager(hal::IBluetooth& ble, events::EventBus& bus);
 
     Result<void> init();
+    void tick();
+    bool canDial() const { return isConnected() && ble_.supportsDial(); }
+    bool canHangup() const { return isConnected() && ble_.supportsHangup(); }
+    bool notificationsReady() const { return ble_.notificationsReady(); }
+    bool mediaReady() const { return ble_.mediaReady(); }
 
     bool isConnected() const;
+    bool isAdvertising() const { return ble_.isAdvertising(); }
     const char* getDeviceName() const;
     const char* getDeviceAddress() const;
     void restartAdvertising();
@@ -78,6 +84,7 @@ public:
     // Notifications history
     size_t getNotificationCount() const { return notifCount_; }
     const AppNotification& getNotification(size_t index) const;
+    bool dismissNotification(size_t index);
     void addNotification(const char* title, const char* message, const char* app, uint32_t uid);
     void clearNotifications();
 
@@ -87,6 +94,11 @@ private:
     static void onBleConnection(bool connected, void* user);
     static void onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, void* user);
 
+    void receive(const events::Event& event);
+    void apply(const events::Event& event);
+#if defined(ARDUINO)
+    void* incomingQueue_{nullptr};
+#endif
     hal::IBluetooth& ble_;
     events::EventBus& bus_;
 
@@ -102,6 +114,9 @@ private:
     static constexpr size_t MAX_NOTIFS = 10;
     AppNotification notifications_[MAX_NOTIFS];
     size_t notifCount_{0};
+    static constexpr size_t MAX_DISMISSED_UIDS = 16;
+    uint32_t dismissedUids_[MAX_DISMISSED_UIDS]{};
+    size_t dismissedCount_{0};
 
     bool mediaPlaying_{false};
     char mediaTitle_[32]{"No Media"};

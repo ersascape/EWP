@@ -511,7 +511,7 @@ void test_bluetooth_manager() {
     TEST_ASSERT(!bleMgr.isConnected(), "Should start disconnected");
     TEST_ASSERT(mockBle.isAdvertising(), "Should start advertising on init");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Initial call state should be Idle");
-    TEST_ASSERT(bleMgr.getRecentCallCount() >= 2, "Should have default seeded recents");
+    TEST_ASSERT(bleMgr.getRecentCallCount() == 0, "Should not seed fake dialable phone numbers");
 
     // 2. Track events from EventBus
     bool gotBleConnected = false;
@@ -563,13 +563,18 @@ void test_bluetooth_manager() {
 
     // 5. Test Accept Call (B1 pressed)
     bleMgr.acceptCall();
-    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Call state should be Active after accept");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Incoming, "Submission must not fabricate active call state");
+    TEST_ASSERT(!gotCallAccepted, "No accepted event before phone confirmation");
+    mockBle.simulateCallAnswered();
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Phone confirms active call");
     TEST_ASSERT(mockBle.acceptCount() == 1, "HAL acceptCall should be called once");
     TEST_ASSERT(gotCallAccepted, "EventBus should receive CallAccepted");
 
     // 6. Test Hang Up Call (B2 pressed)
     bleMgr.hangupCall();
-    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Ended, "Call state should be Ended after hangup");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Hangup waits for phone confirmation");
+    mockBle.simulateCallEnded();
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Ended, "Phone confirms ended call");
     TEST_ASSERT(mockBle.hangupCount() == 1, "HAL hangupCall should be called once");
     TEST_ASSERT(gotCallEnded, "EventBus should receive CallEnded");
 
@@ -597,7 +602,9 @@ void test_bluetooth_manager() {
     bleMgr.mediaToggle();
     TEST_ASSERT(mockBle.mediaCmdCount() == 2, "mediaCommand should be called twice");
     TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Toggle, "Action should be Toggle");
-    TEST_ASSERT(!bleMgr.isPlaying(), "Playback state should now be paused");
+    TEST_ASSERT(bleMgr.isPlaying(), "Command submission must not fabricate paused state");
+    mockBle.simulateMedia(false, "Starboy", "The Weeknd");
+    TEST_ASSERT(!bleMgr.isPlaying(), "Phone confirms pause");
 
     // Test previous track
     bleMgr.mediaPrevious();
@@ -629,10 +636,49 @@ void test_bluetooth_manager() {
     TEST_ASSERT(strcmp(bleMgr.getNotification(0).title, "WhatsApp") == 0, "Notification title should match");
     TEST_ASSERT(strcmp(bleMgr.getNotification(0).message, "Hey! Meeting starts in 5 mins") == 0, "Notification message should match");
 
+    mockBle.simulateNotification("Updated", "new body", "Mail", 42);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Modified UID replaces history entry");
+    TEST_ASSERT(strcmp(bleMgr.getNotification(0).title, "Updated") == 0, "Updated title retained");
+
+    mockBle.simulateNotification(nullptr, nullptr, "", 42);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 0, "Removed UID leaves notification history");
+    mockBle.simulateNotification("New session data", "body", "Mail", 43);
+
+    mockBle.simulateNotification(nullptr, nullptr, nullptr, 0);
+    TEST_ASSERT(bleMgr.isConnected(), "ANCS subscription reset keeps BLE link connected");
+    TEST_ASSERT(bleMgr.getNotificationCount() == 0, "ANCS reset clears old session history");
+    mockBle.simulateNotification("Recovered", "body", "Mail", 44);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Notifications resume after subscription reset");
+
+    mockBle.simulateNotification("Second", "second body", "Mail", 45);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 2, "Two notifications can be browsed");
+    TEST_ASSERT(bleMgr.dismissNotification(0), "Selected notification can be dismissed");
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Dismiss removes only selected notification");
+    TEST_ASSERT(bleMgr.getNotification(0).uid == 44, "Other notification remains visible");
+    gotNotification = false;
+    mockBle.simulateNotification("Second updated", "late body", "Mail", 45);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Late ANCS update cannot restore dismissed UID");
+    TEST_ASSERT(!gotNotification, "Late dismissed update does not reopen notification screen");
+    TEST_ASSERT(!bleMgr.dismissNotification(1), "Out-of-range dismissal is ignored");
+    mockBle.simulateNotification(nullptr, nullptr, "", 45);
+    mockBle.simulateNotification("New UID", "new body", "Mail", 45);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 2, "Removal releases UID suppression");
+    mockBle.simulateNotification(nullptr, nullptr, nullptr, 0);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 0, "ANCS reset clears notification history");
+    mockBle.simulateNotification("New session", "body", "Mail", 45);
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "New session accepts previously dismissed UID");
+
     // 10. Disconnect
     mockBle.simulateConnection(false);
     TEST_ASSERT(!bleMgr.isConnected(), "Should report disconnected");
     TEST_ASSERT(gotBleDisconnected, "EventBus should receive BleDisconnected");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Disconnect clears stale call");
+    TEST_ASSERT(!bleMgr.isPlaying(), "Disconnect clears media state");
+    TEST_ASSERT(bleMgr.getNotificationCount() == 0, "Disconnect invalidates ANCS session UIDs");
+    bleMgr.acceptCall();
+    TEST_ASSERT(mockBle.acceptCount() == 1, "Cannot answer after disconnect");
+    bleMgr.restartAdvertising();
+    TEST_ASSERT(mockBle.isAdvertising(), "Manual reconnect advertises again");
 
     TEST_PASS();
 }
@@ -640,11 +686,14 @@ void test_bluetooth_manager() {
 // -----------------------------------------------------------------------------
 // Main Test Runner
 // -----------------------------------------------------------------------------
+void test_apple_protocols();
+
 int main() {
     printf("==================================================\n");
     printf("        Ersa Smartwatch Core Architecture Tests   \n");
     printf("==================================================\n");
 
+    test_apple_protocols();
     test_event_bus();
     test_application_manager();
     test_time_service();

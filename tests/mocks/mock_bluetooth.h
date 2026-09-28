@@ -37,6 +37,9 @@ public:
         notifUserData_ = userData;
     }
 
+    bool supportsDial() const override { return true; }
+    bool supportsHangup() const override { return true; }
+
     void acceptCall() override {
         acceptCount_++;
     }
@@ -70,6 +73,10 @@ public:
 
     void simulateIncomingCall(const char* caller, const char* number) {
         if (callCb_) callCb_(hal::BleCallAction::Incoming, caller, number, callUserData_);
+    }
+
+    void simulateCallAnswered() {
+        if (callCb_) callCb_(hal::BleCallAction::Answered, "", "", callUserData_);
     }
 
     void simulateCallEnded() {

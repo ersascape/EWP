@@ -158,12 +158,22 @@ void WatchUi::begin() {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
         if (mgr && mgr->getActiveApp()) {
             const char* id = mgr->getActiveApp()->getId();
-            if (strcmp(id, "app_call") != 0) {
+            if (strcmp(id, "app_call") != 0 &&
+                bluetoothManager.getCallState() != ersa::services::CallState::Incoming &&
+                bluetoothManager.getCallState() != ersa::services::CallState::Active) {
                 mgr->switchTo("app_notifications");
                 mgr->markDirty(false);
             }
         }
     }, &appManager);
+
+    for (auto type : {ersa::events::EventType::CallEnded, ersa::events::EventType::CallAccepted,
+                      ersa::events::EventType::BleConnected, ersa::events::EventType::BleDisconnected,
+                      ersa::events::EventType::NotificationRemoved, ersa::events::EventType::NotificationsCleared}) {
+        eventBus.subscribe(type, [](const ersa::events::Event&, void* user) {
+            static_cast<ersa::app::ApplicationManager*>(user)->markDirty(false);
+        }, &appManager);
+    }
 
     ersa::app::registerAllApps(appManager);
     appManager.switchTo("watchface_clock");
@@ -187,7 +197,7 @@ void WatchUi::onButton(Buttons::Event legacyEvent) {
     if (appManager.getActiveApp() != nullptr &&
         strcmp(appManager.getActiveApp()->getId(), "watchface_clock") == 0 &&
         legacyEvent == Buttons::Event::Home) {
-        if (bluetoothManager.getRecentCallCount() > 0) {
+        if (bluetoothManager.canDial() && bluetoothManager.getRecentCallCount() > 0) {
             DebugLog::log("UI: Hold B1 on watchface -> Quick dial recent %s (%s)",
                           bluetoothManager.getRecentCall(0).name,
                           bluetoothManager.getRecentCall(0).number);
@@ -207,6 +217,7 @@ void WatchUi::onButton(Buttons::Event legacyEvent) {
 }
 
 void WatchUi::tick() {
+    bluetoothManager.tick();
     board.getInput().poll();
     eventBus.dispatchQueue();
     appManager.tick();
