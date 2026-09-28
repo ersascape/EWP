@@ -235,25 +235,22 @@ Result<void> Esp32Bluetooth::init() {
 void Esp32Bluetooth::startAdvertising() {
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
 
-    // Primary Advertisement: 27 bytes total (fits within 31-byte limit)
+    // Primary Advertisement Data: Flags + ANCS 128-bit Service Solicitation (21 bytes <= 31 max)
     BLEAdvertisementData advData;
     advData.setFlags(0x06); // General Discoverable + BR/EDR Not Supported
-    advData.setName("Ersa"); // Shortened name in primary adv to fit 128-bit solicit UUID
 
-    // 128-bit ANCS Solicitation UUID (little endian): 7905f431-b5ce-4e99-a40f-4b1e122d00d0
-    static const uint8_t ancsSolicitBytes[18] = {
-        17,   // Length of AD element (1 byte AD type + 16 bytes UUID)
-        0x15, // AD Type: 128-bit Service Solicitation (ESP_BLE_AD_TYPE_128SOL_SRV_UUID)
-        0xD0, 0x00, 0x2D, 0x12, 0x1E, 0x4B, 0x0F, 0x80,
-        0x89, 0x4E, 0xCE, 0xB5, 0x31, 0xF4, 0x05, 0x79
-    };
-    advData.addData(std::string(reinterpret_cast<const char*>(ancsSolicitBytes), sizeof(ancsSolicitBytes)));
+    // 128-bit ANCS Solicitation UUID: 7905f431-b5ce-4e99-a40f-4b1e122d00d0
+    BLEUUID ancsUUID("7905f431-b5ce-4e99-a40f-4b1e122d00d0");
+    char solData[2];
+    solData[0] = 17;   // Length of AD element (1 byte type + 16 bytes UUID)
+    solData[1] = 0x15; // AD Type: 128-bit Service Solicitation
+    advData.addData(std::string(solData, 2) + std::string(reinterpret_cast<const char*>(ancsUUID.getNative()->uuid.uuid128), 16));
     pAdvertising->setAdvertisementData(advData);
 
-    // Scan Response Data: Full name and custom service UUID
+    // Scan Response Data: Full device name ("Ersa Wearable") + 16-bit Service UUID (19 bytes <= 31 max)
     BLEAdvertisementData scanResponse;
     scanResponse.setName("Ersa Wearable");
-    scanResponse.setCompleteServices(BLEUUID(SERVICE_UUID));
+    scanResponse.setCompleteServices(BLEUUID((uint16_t)0xFFE0));
     pAdvertising->setScanResponseData(scanResponse);
 
     pAdvertising->setMinPreferred(0x06);
