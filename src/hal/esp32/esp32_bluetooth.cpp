@@ -7,6 +7,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include "hal/esp32/esp32_apple_ble.h"
 #include "core/debug_log.h"
 
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
@@ -36,24 +37,17 @@ public:
     BLECharacteristic* pCallChar_{nullptr};
     BLECharacteristic* pMediaChar_{nullptr};
     BLECharacteristic* pRecentsChar_{nullptr};
+    Esp32AppleClient appleClient_;
     bool connected_{false};
     bool initialized_{false};
-
-    void onConnect(BLEServer* pServer) override {
-        (void)pServer;
-        connected_ = true;
-        DebugLog::log("BLE: Central connected");
-        if (parent_ && parent_->connCb_) {
-            parent_->connCb_(true, parent_->connUserData_);
-        }
-    }
 
     void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override {
         (void)pServer;
         connected_ = true;
-        DebugLog::log("BLE: Central connected (with connection params)");
+        DebugLog::log("BLE: Central connected");
         if (param) {
             esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
+            appleClient_.startDiscovery(param->connect.remote_bda, param->connect.ble_addr_type);
         }
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(true, parent_->connUserData_);
@@ -63,6 +57,7 @@ public:
     void onDisconnect(BLEServer* pServer) override {
         (void)pServer;
         connected_ = false;
+        appleClient_.stop();
         DebugLog::log("BLE: Central disconnected, restarting advertising");
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(false, parent_->connUserData_);
@@ -285,11 +280,17 @@ bool Esp32Bluetooth::isConnected() const {
 void Esp32Bluetooth::setCallCallback(BleCallCallback cb, void* userData) {
     callCb_ = cb;
     callUserData_ = userData;
+    if (pImpl_) {
+        pImpl_->appleClient_.setCallCallback(cb, userData);
+    }
 }
 
 void Esp32Bluetooth::setMediaCallback(BleMediaCallback cb, void* userData) {
     mediaCb_ = cb;
     mediaUserData_ = userData;
+    if (pImpl_) {
+        pImpl_->appleClient_.setMediaCallback(cb, userData);
+    }
 }
 
 void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userData) {
@@ -299,28 +300,37 @@ void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userD
 
 void Esp32Bluetooth::acceptCall() {
     DebugLog::log("BLE: Command -> ACCEPT CALL");
-    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_) {
-        uint8_t val = 0x01; // Accept
-        pImpl_->pCallChar_->setValue(&val, 1);
-        pImpl_->pCallChar_->notify();
+    if (pImpl_) {
+        pImpl_->appleClient_.acceptCall();
+        if (pImpl_->pCallChar_ && pImpl_->connected_) {
+            uint8_t val = 0x01; // Accept
+            pImpl_->pCallChar_->setValue(&val, 1);
+            pImpl_->pCallChar_->notify();
+        }
     }
 }
 
 void Esp32Bluetooth::rejectCall() {
     DebugLog::log("BLE: Command -> REJECT CALL");
-    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_) {
-        uint8_t val = 0x02; // Reject
-        pImpl_->pCallChar_->setValue(&val, 1);
-        pImpl_->pCallChar_->notify();
+    if (pImpl_) {
+        pImpl_->appleClient_.rejectCall();
+        if (pImpl_->pCallChar_ && pImpl_->connected_) {
+            uint8_t val = 0x02; // Reject
+            pImpl_->pCallChar_->setValue(&val, 1);
+            pImpl_->pCallChar_->notify();
+        }
     }
 }
 
 void Esp32Bluetooth::hangupCall() {
     DebugLog::log("BLE: Command -> HANG UP CALL");
-    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_) {
-        uint8_t val = 0x02; // Hangup
-        pImpl_->pCallChar_->setValue(&val, 1);
-        pImpl_->pCallChar_->notify();
+    if (pImpl_) {
+        pImpl_->appleClient_.rejectCall();
+        if (pImpl_->pCallChar_ && pImpl_->connected_) {
+            uint8_t val = 0x02; // Hangup
+            pImpl_->pCallChar_->setValue(&val, 1);
+            pImpl_->pCallChar_->notify();
+        }
     }
 }
 
@@ -342,10 +352,13 @@ void Esp32Bluetooth::dial(const char* number) {
 
 void Esp32Bluetooth::mediaCommand(BleMediaAction action) {
     DebugLog::log("BLE: Command -> MEDIA ACTION %d", int(action));
-    if (pImpl_ && pImpl_->pMediaChar_ && pImpl_->connected_) {
-        uint8_t val = static_cast<uint8_t>(action);
-        pImpl_->pMediaChar_->setValue(&val, 1);
-        pImpl_->pMediaChar_->notify();
+    if (pImpl_) {
+        pImpl_->appleClient_.mediaCommand(action);
+        if (pImpl_->pMediaChar_ && pImpl_->connected_) {
+            uint8_t val = static_cast<uint8_t>(action);
+            pImpl_->pMediaChar_->setValue(&val, 1);
+            pImpl_->pMediaChar_->notify();
+        }
     }
 }
 
