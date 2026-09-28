@@ -54,11 +54,12 @@ public:
         (void)pServer;
         connected_ = true;
         DebugLog::log("BLE: Central connected (with connection params)");
+        if (param) {
+            esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
+            appleClient_.startDiscovery(param->connect.remote_bda, param->connect.ble_addr_type);
+        }
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(true, parent_->connUserData_);
-        }
-        if (param) {
-            appleClient_.startDiscovery(param->connect.remote_bda, param->connect.ble_addr_type);
         }
     }
 
@@ -220,7 +221,11 @@ Result<void> Esp32Bluetooth::init() {
     pBatLevelChar->setValue(&battPct, 1);
     pBatService->start();
 
+    pImpl_->pCallChar_->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+    pImpl_->pMediaChar_->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+
     // Configure BLE Security Bonding for native iOS Pairing & ANCS / AMS access
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
     BLEDevice::setSecurityCallbacks(new BleSecCallbacks());
     BLESecurity* pSecurity = new BLESecurity();
     pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
