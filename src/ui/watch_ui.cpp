@@ -155,12 +155,16 @@ void WatchUi::begin() {
 
     eventBus.subscribe(ersa::events::EventType::BleConnected, [](const ersa::events::Event&, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr) mgr->markDirty(false);
+        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_pairing") == 0) {
+            mgr->markDirty(false);
+        }
     }, &appManager);
 
     eventBus.subscribe(ersa::events::EventType::BleDisconnected, [](const ersa::events::Event&, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr) mgr->markDirty(false);
+        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_pairing") == 0) {
+            mgr->markDirty(false);
+        }
     }, &appManager);
 
     ersa::app::registerAllApps(appManager);
