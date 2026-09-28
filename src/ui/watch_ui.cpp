@@ -28,7 +28,6 @@ uint8_t shownDay = 0;
 bool shownRtcHealthy = false;
 uint32_t lastFrameEnd = 0;
 uint32_t lastActivityMs = 0;
-bool panelPowered = false;
 uint16_t partialFrames = 0;
 bool firstFrame = true;
 
@@ -75,8 +74,8 @@ void renderCurrentApp() {
     gx.setTextWrap(false);
     activeApp->render(espDisp, true);
 
+    gx.setFullWindow();
     if (hardwareFull) {
-        gx.setFullWindow();
         gx.display(false); // Hardware full refresh (clears ghosting)
         partialFrames = 0;
         firstFrame = false;
@@ -86,7 +85,6 @@ void renderCurrentApp() {
     }
     appManager.clearAppSwitched();
 
-    panelPowered = true;
     lastActivityMs = millis();
     shownMinute = time.unixtime() / 60;
     shownDay = time.day();
@@ -151,14 +149,16 @@ void WatchUi::tick() {
     eventBus.dispatchQueue();
     appManager.tick();
 
-    const uint32_t nowMs = millis();
+    uint32_t nowMs = millis();
     timeService.tick(nowMs);
     powerManager.tick(nowMs);
+
+    const uint32_t idleMs = (nowMs >= lastActivityMs) ? (nowMs - lastActivityMs) : 0;
 
     // Auto-return to watchface after 60 seconds of inactivity on other screens
     if (appManager.getActiveApp() != nullptr &&
         strcmp(appManager.getActiveApp()->getId(), "watchface_clock") != 0 &&
-        (nowMs - lastActivityMs >= 60000)) {
+        (idleMs >= 60000)) {
         DebugLog::log("UI: auto-returning to watchface after 60s idle");
         appManager.switchTo("watchface_clock");
         lastActivityMs = nowMs;
@@ -170,45 +170,50 @@ void WatchUi::tick() {
     }
 
     const bool displayBusy = board.getEsp32Display().isBusy();
-    if (appManager.isDirty() && !displayBusy && (nowMs - lastFrameEnd >= 150)) {
+    const uint32_t timeSinceRender = (nowMs >= lastFrameEnd) ? (nowMs - lastFrameEnd) : 0;
+    if (appManager.isDirty() && !displayBusy && (timeSinceRender >= 150)) {
         renderCurrentApp();
         appManager.clearDirty();
+        nowMs = millis(); // Refresh timestamp immediately after rendering finishes
     }
 
-    // Power off EPD panel after 3 seconds of idle (drops panel draw to 0)
-    if (panelPowered && (nowMs - lastActivityMs >= 3000)) {
-        board.getEsp32Display().powerOff();
-        panelPowered = false;
-        DebugLog::log("EPD: powered off (idle timeout)");
+#if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
+    // Keep CPU awake while USB serial terminal is connected for live monitoring/debugging
+    if (Serial) {
+        return;
     }
+#endif
 
-    // Low-power Light Sleep:
-    // Conditions:
-    // 1. Not dirty and display not busy
-    // 2. No network sync active, no hotspot portal active, no active wake locks
-    // 3. No buttons currently pressed or pending in queue
-    // 4. Idle timeout elapsed:
-    //    - On watchface: 4 seconds after last activity
-    //    - On other apps: 12 seconds after last activity
+    // Only sleep on the watchface when idle
+    // Interactive apps (calendar, agenda, todo, drawer, etc.) stay awake for instant button response
     const bool onWatchface = (appManager.getActiveApp() != nullptr &&
                               strcmp(appManager.getActiveApp()->getId(), "watchface_clock") == 0);
-    const uint32_t sleepIdleTimeout = onWatchface ? 4000 : 12000;
+    if (!onWatchface) {
+        return;
+    }
 
+    const uint32_t postIdleMs = (nowMs >= lastActivityMs) ? (nowMs - lastActivityMs) : 0;
+    const uint32_t postRenderAge = (nowMs >= lastFrameEnd) ? (nowMs - lastFrameEnd) : 0;
+
+    // Low-power Light Sleep on Watchface:
+    // Conditions:
+    // 1. Not dirty and display hardware controller not busy
+    // 2. Physical settling guard: at least 2000 ms elapsed since last frame end
+    //    (allows E-ink microcapsules and charge pumps to settle without electrical interruption)
+    // 3. At least 8000 ms elapsed since last button activity
+    // 4. No network sync active, no hotspot portal active, no active wake locks
+    // 5. No buttons currently pressed or pending in queue
     const bool canSleep = !appManager.isDirty() &&
                           !board.getEsp32Display().isBusy() &&
+                          (postRenderAge >= 2000) &&
+                          (postIdleMs >= 8000) &&
                           !NetSync::isSyncing() &&
                           !AppPortal::isActive() &&
                           powerManager.canSleep() &&
                           !Buttons::isPressed() &&
-                          !Buttons::hasPendingEvents() &&
-                          ((nowMs - lastActivityMs) >= sleepIdleTimeout);
+                          !Buttons::hasPendingEvents();
 
     if (canSleep) {
-        if (panelPowered) {
-            board.getEsp32Display().powerOff();
-            panelPowered = false;
-        }
-
         const DateTime now = WatchClock::now();
         const uint32_t sec = now.second();
         const uint32_t secRemaining = (sec < 60) ? (60 - sec) : 60;
