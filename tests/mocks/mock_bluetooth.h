@@ -65,6 +65,12 @@ public:
         mediaCmdCount_++;
     }
 
+    bool dismissNotification(uint32_t uid) override {
+        ++notificationDismissCount_;
+        lastDismissedUid_ = uid;
+        return true;
+    }
+
     // Test helper simulation triggers
     void simulateConnection(bool conn) {
         connected_ = conn;
@@ -87,8 +93,8 @@ public:
         if (mediaCb_) mediaCb_(playing, title, artist, mediaUserData_);
     }
 
-    void simulateNotification(const char* title, const char* message, const char* app = "Messages", uint32_t uid = 1) {
-        if (notifCb_) notifCb_(title, message, app, uid, notifUserData_);
+    void simulateNotification(const char* title, const char* message, const char* app = "Messages", uint32_t uid = 1, bool canDismissRemotely = false) {
+        if (notifCb_) notifCb_(title, message, app, uid, canDismissRemotely, notifUserData_);
     }
 
     bool isAdvertising() const { return advertising_; }
@@ -99,6 +105,8 @@ public:
     const char* lastDialed() const { return lastDialed_; }
     int mediaCmdCount() const { return mediaCmdCount_; }
     hal::BleMediaAction lastMediaAction() const { return lastMediaAction_; }
+    int notificationDismissCount() const { return notificationDismissCount_; }
+    uint32_t lastDismissedUid() const { return lastDismissedUid_; }
 
 private:
     bool advertising_{false};
@@ -124,6 +132,8 @@ private:
 
     int mediaCmdCount_{0};
     hal::BleMediaAction lastMediaAction_{hal::BleMediaAction::Play};
+    int notificationDismissCount_{0};
+    uint32_t lastDismissedUid_{0};
 };
 
 } // namespace test

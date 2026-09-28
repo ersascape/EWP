@@ -255,7 +255,8 @@ void BluetoothManager::apply(const events::Event& event) {
             for (size_t i = 0; i < dismissedCount_; ++i)
                 if (dismissedUids_[i] == event.notification.uid) return;
             addNotification(event.notification.title, event.notification.message,
-                            event.notification.app, event.notification.uid);
+                            event.notification.app, event.notification.uid,
+                            event.notification.canDismissRemotely);
             break;
         case EventType::BleDisconnected:
             callState_ = CallState::Idle; callStartMs_ = 0;
@@ -288,12 +289,12 @@ void BluetoothManager::onBleConnection(bool connected, void* user) {
 }
 
 void BluetoothManager::simulateNotification(const char* title, const char* message, const char* app) {
-    onBleNotification(title, message, app, 1, this);
+    onBleNotification(title, message, app, 1, false, this);
 }
 
 const AppNotification& BluetoothManager::getNotification(size_t index) const {
     if (notifCount_ == 0) {
-        static AppNotification empty{"", "", "", 0, 0};
+        static AppNotification empty{"", "", "", 0, 0, false};
         return empty;
     }
     return notifications_[index < notifCount_ ? index : 0];
@@ -302,6 +303,7 @@ const AppNotification& BluetoothManager::getNotification(size_t index) const {
 bool BluetoothManager::dismissNotification(size_t index) {
     if (index >= notifCount_) return false;
     const uint32_t uid = notifications_[index].uid;
+    if (notifications_[index].canDismissRemotely) ble_.dismissNotification(uid);
     if (dismissedCount_ == MAX_DISMISSED_UIDS) {
         for (size_t i = 1; i < dismissedCount_; ++i) dismissedUids_[i - 1] = dismissedUids_[i];
         --dismissedCount_;
@@ -312,7 +314,7 @@ bool BluetoothManager::dismissNotification(size_t index) {
     return true;
 }
 
-void BluetoothManager::addNotification(const char* title, const char* message, const char* app, uint32_t uid) {
+void BluetoothManager::addNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely) {
     if (!title && !message) return;
 
     for (size_t i = 0; i < notifCount_; ++i) {
@@ -329,6 +331,7 @@ void BluetoothManager::addNotification(const char* title, const char* message, c
     AppNotification& newest = notifications_[0];
     newest.uid = uid;
     newest.timestampEpoch = millis() / 1000;
+    newest.canDismissRemotely = canDismissRemotely;
     strncpy(newest.title, title ? title : "Notification", sizeof(newest.title) - 1);
     newest.title[sizeof(newest.title) - 1] = '\0';
     strncpy(newest.message, message ? message : "", sizeof(newest.message) - 1);
@@ -345,11 +348,11 @@ void BluetoothManager::clearNotifications() {
     notifCount_ = 0;
 }
 
-void BluetoothManager::onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, void* user) {
+void BluetoothManager::onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user) {
     auto* self = static_cast<BluetoothManager*>(user);
     if (!self) return;
 
-    events::Event evt = events::Event::createNotification(title, message, app, uid, millis());
+    events::Event evt = events::Event::createNotification(title, message, app, uid, millis(), canDismissRemotely);
     if (!title && !message) evt.type = app ? events::EventType::NotificationRemoved : events::EventType::NotificationsCleared;
     self->receive(evt);
 }

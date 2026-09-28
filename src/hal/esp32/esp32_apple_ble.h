@@ -27,6 +27,7 @@ public:
 
     void acceptCall();
     void rejectCall();
+    bool dismissNotification(uint32_t uid);
     void mediaCommand(BleMediaAction action);
 
 private:
@@ -56,6 +57,7 @@ public:
     bool isAmsActive() const { return false; }
     void acceptCall() {}
     void rejectCall() {}
+    bool dismissNotification(uint32_t) { return false; }
     void mediaCommand(BleMediaAction) {}
 };
 

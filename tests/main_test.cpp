@@ -650,9 +650,11 @@ void test_bluetooth_manager() {
     mockBle.simulateNotification("Recovered", "body", "Mail", 44);
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Notifications resume after subscription reset");
 
-    mockBle.simulateNotification("Second", "second body", "Mail", 45);
+    mockBle.simulateNotification("Second", "second body", "Mail", 45, true);
     TEST_ASSERT(bleMgr.getNotificationCount() == 2, "Two notifications can be browsed");
     TEST_ASSERT(bleMgr.dismissNotification(0), "Selected notification can be dismissed");
+    TEST_ASSERT(mockBle.notificationDismissCount() == 1 && mockBle.lastDismissedUid() == 45,
+                "Advertised dismissal action is forwarded to the phone");
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Dismiss removes only selected notification");
     TEST_ASSERT(bleMgr.getNotification(0).uid == 44, "Other notification remains visible");
     gotNotification = false;

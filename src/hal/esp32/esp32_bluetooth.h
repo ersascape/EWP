@@ -34,6 +34,7 @@ public:
     void dial(const char* number) override;
 
     void mediaCommand(BleMediaAction action) override;
+    bool dismissNotification(uint32_t uid) override;
 
 private:
     void beginAdvertising();

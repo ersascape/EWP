@@ -37,8 +37,9 @@ separate companion integration. Neither is implemented by this change.
 
 ## Notification and media behavior
 
-- One combined ANCS Title + Message request is in flight at a time. Responses are
-  reassembled across GATT fragments and validated against their requested UID.
+- One ANCS attribute request is in flight at a time. Title and Message are always
+  requested; the negative action label is requested when iOS advertises that action.
+  Responses are reassembled across GATT fragments and validated against their UID.
 - Call events and general Notification Source records have separate compact queues.
   The bounded history favors recent records during large startup bursts. Dropped
   history never disconnects BLE or invalidates a different attribute response.
@@ -48,6 +49,9 @@ separate companion integration. Neither is implemented by this change.
   is exhausted, metadata requests pause until the next connection; BLE and AMS stay up.
 - Resubscribing creates a new ANCS epoch. Old fragments cannot be mixed into the new
   session. Call actions use their captured UID and the latest positive/negative flags.
+- A watch notification dismissal is sent to iOS only when the notification advertises
+  a negative action and its label is “Dismiss” or “Clear.” ANCS supplies no result
+  notification for action commands, and other labels are not treated as dismissal.
 - ANCS Message is not a guaranteed telephone number. Notification removal only ends
   the ringing notification; it does not establish the phone call's final outcome.
   Native ANCS cannot provide a complete active-call timer, dialing, or hangup API.
@@ -60,8 +64,8 @@ separate companion integration. Neither is implemented by this change.
 ## Regression and device verification
 
 `make test` covers fragmented headers and attribute values, empty and maximum-sized
-responses, UID mismatch, malformed data, stale/unavailable call actions, AMS decoding,
-notification modification/removal/reset, and disconnect cleanup. The ESP32 firmware
+responses, UID mismatch, malformed data, dismissal-label parsing, stale/unavailable
+call actions, AMS decoding, notification modification/removal/reset, and disconnect cleanup. The ESP32 firmware
 build verifies the hardware adapter compiles; it is not a radio integration test.
 
 For a device check, confirm `burst-safe worker started` in the log, then:
@@ -70,6 +74,9 @@ For a device check, confirm `burst-safe worker started` in the log, then:
    by a watch-initiated disconnect. History-burst warnings may occur without link loss.
 2. Deliver two messages and an incoming call together; answer/decline while messages
    continue arriving. Caller text and actions must stay attached to the call UID.
+   For a notification that exposes “Dismiss” or “Clear,” dismiss it from the watch
+   and confirm it disappears on iOS. Notifications with other action labels should
+   disappear only from watch history.
 3. Start/pause/change music, including long titles; launch the player after pairing.
 4. Leave the phone locked and watch idle, then move out of range and return. Verify
    advertising resumes and Apple services are discovered after authentication.

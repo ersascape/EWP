@@ -37,7 +37,7 @@ public:
     BleNotificationCallback notifCb_{nullptr};
     void* notifUserData_{nullptr};
 
-    enum Kind : uint8_t { Notification, Attributes, Media, CallAction, MediaAction, MediaCommands, ServicesChanged };
+    enum Kind : uint8_t { Notification, Attributes, Media, CallAction, NotificationAction, MediaAction, MediaCommands, ServicesChanged };
     struct Packet {
         Kind kind;
         uint32_t session;
@@ -71,10 +71,12 @@ public:
     BLERemoteCharacteristic* control_{nullptr};
     BLERemoteCharacteristic* remote_{nullptr};
     protocols::AncsCall call_;
-    struct Request { uint32_t uid; bool call; bool removed; };
+    struct Request { uint32_t uid; bool call; bool removed; uint8_t flags; };
     Request pending_[16]{};
     size_t pendingCount_{0};
     Request active_{};
+    struct DismissTarget { uint32_t uid{0}; bool allowed{false}; };
+    DismissTarget dismissTargets_[16]{};
     bool waiting_{false};
     bool attributesBlocked_{false};
     uint8_t recoveryAttempts_{0};
@@ -125,6 +127,15 @@ public:
         }
     }
 
+    bool requestNotificationDismiss(uint32_t uid) {
+        if (!ancsReady_ || !uid || !queue_) return false;
+        Packet packet{};
+        packet.kind = NotificationAction;
+        packet.session = generation_.load();
+        packet.uid = uid;
+        return xQueueSend(queue_, &packet, 0) == pdTRUE;
+    }
+
     void changePeer(const uint8_t* address, esp_ble_addr_type_t type) {
         portENTER_CRITICAL(&controlMux_);
         wanted_ = address != nullptr;
@@ -144,15 +155,17 @@ public:
         if (size != 8 || data[0] > 2) return;
         const uint32_t uid = protocols::readLe32(data + 4);
         if (data[0] == 2) {
+            for (auto& target : dismissTargets_) if (target.uid == uid) target = {};
             if (waiting_ && active_.uid == uid) active_.removed = true;
             for (size_t i = 0; i < pendingCount_; ++i)
                 if (pending_[i].uid == uid) pending_[i].removed = true;
-            if (notifCb_) notifCb_(nullptr, nullptr, "", uid, notifUserData_);
+            if (notifCb_) notifCb_(nullptr, nullptr, "", uid, false, notifUserData_);
             if (call_.remove(uid) && callCb_)
                 callCb_(BleCallAction::Ended, "", "", callUserData_);
             return;
         }
         const bool incoming = data[2] == 1;
+        for (auto& target : dismissTargets_) if (target.uid == uid) target.allowed = false;
         if (incoming) {
             const bool fresh = !call_.ringing || call_.uid != uid;
             call_.update(uid, data[1]);
@@ -161,7 +174,7 @@ public:
         }
         // Coalesce queued modifications without mixing attributes across UIDs.
         for (size_t i = 0; i < pendingCount_; ++i) {
-            if (pending_[i].uid == uid) { pending_[i] = {uid, incoming, false}; return; }
+            if (pending_[i].uid == uid) { pending_[i] = {uid, incoming, false, data[1]}; return; }
         }
         if (attributesBlocked_) return;
         if (pendingCount_ == 16) {
@@ -176,9 +189,9 @@ public:
         }
         if (incoming) {
             for (size_t i = pendingCount_; i > 0; --i) pending_[i] = pending_[i - 1];
-            pending_[0] = {uid, true, false};
+            pending_[0] = {uid, true, false, data[1]};
             ++pendingCount_;
-        } else pending_[pendingCount_++] = {uid, false, false};
+        } else pending_[pendingCount_++] = {uid, false, false, data[1]};
     }
 
     void requestNext() {
@@ -188,12 +201,13 @@ public:
             for (size_t i = 1; i < pendingCount_; ++i) pending_[i - 1] = pending_[i];
             --pendingCount_;
             if (active_.removed) continue;
-            uint8_t cmd[11];
-            protocols::AncsAttributes::request(active_.uid, cmd);
-            attributes_.begin(active_.uid);
+            uint8_t cmd[14];
+            const bool requestNegativeLabel = !active_.call && (active_.flags & 16);
+            protocols::AncsAttributes::request(active_.uid, requestNegativeLabel, cmd);
+            attributes_.begin(active_.uid, requestNegativeLabel);
             waiting_ = true;
             requestedAt_ = millis();
-            control_->writeValue(cmd, sizeof(cmd), true);
+            control_->writeValue(cmd, requestNegativeLabel ? 14 : 11, true);
             break;
         }
     }
@@ -215,8 +229,14 @@ public:
                         attributes_.title[0] ? attributes_.title : "incoming call",
                         "", callUserData_); // ANCS Message is not a telephone-number field.
         } else if (notifCb_) {
+            const bool canDismiss = (active_.flags & 16) && attributes_.negativeActionIsDismissal();
+            DismissTarget* slot = nullptr;
+            for (auto& target : dismissTargets_) if (target.uid == active_.uid) { slot = &target; break; }
+            if (!slot) for (auto& target : dismissTargets_) if (!target.uid) { slot = &target; break; }
+            if (!slot) slot = &dismissTargets_[0];
+            *slot = {active_.uid, canDismiss};
             notifCb_(attributes_.title[0] ? attributes_.title : "notification",
-                     attributes_.message, "iPhone", active_.uid, notifUserData_);
+                     attributes_.message, "iPhone", active_.uid, canDismiss, notifUserData_);
         }
     }
 
@@ -233,6 +253,18 @@ public:
                     control_->writeValue(command, sizeof(command), true);
                     // Submission is not proof that a call became active.
                 }
+                break;
+            }
+            case NotificationAction: {
+                if (!control_) break;
+                bool allowed = false;
+                for (const auto& target : dismissTargets_)
+                    if (target.uid == p.uid) { allowed = target.allowed; break; }
+                if (!allowed) break;
+                uint8_t command[6] = {2};
+                protocols::writeLe32(command + 1, p.uid);
+                command[5] = 1; // ANCS negative action, validated against the advertised label.
+                control_->writeValue(command, sizeof(command), true);
                 break;
             }
             case ServicesChanged: servicesChanged_ = true; break;
@@ -338,7 +370,8 @@ public:
         xQueueReset(sourceQueue_); xQueueReset(callQueue_);
         if (call_.ringing && callCb_) callCb_(BleCallAction::Ended, "", "", callUserData_);
         call_ = {};
-        if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, notifUserData_);
+        for (auto& target : dismissTargets_) target = {};
+        if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, false, notifUserData_);
         if (!live() || !client_->isConnected()) return;
         subscribe(data_, Attributes);
         subscribe(source_, Notification);
@@ -351,6 +384,7 @@ public:
         ancsReady_ = false; amsReady_ = false;
         control_ = remote_ = source_ = data_ = update_ = entityAttribute_ = changed_ = nullptr;
         waiting_ = false; pendingCount_ = 0; overflow_ = false;
+        for (auto& target : dismissTargets_) target = {};
         attributesBlocked_ = false; recoveryAttempts_ = 0;
         ++ancsEpoch_; droppedHistory_ = 0; droppedOther_ = 0;
         xQueueReset(sourceQueue_); xQueueReset(callQueue_);
@@ -434,7 +468,7 @@ public:
                     if (amsReady_) { update_->registerForNotify(nullptr); remote_->registerForNotify(nullptr); }
                     if (changed_) changed_->registerForNotify(nullptr, false);
                     if (call_.ringing && callCb_) callCb_(BleCallAction::Ended, "", "", callUserData_);
-                    if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, notifUserData_);
+                    if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, false, notifUserData_);
                     resetSession();
                     ready = discover();
                     // Missing Apple services must not close the phone link.
@@ -491,6 +525,9 @@ void Esp32AppleClient::authenticationComplete(bool success) {
 void Esp32AppleClient::stop() { pImpl_->changePeer(nullptr, BLE_ADDR_TYPE_RANDOM); }
 bool Esp32AppleClient::isAncsActive() const { return pImpl_->ancsReady_; }
 bool Esp32AppleClient::isAmsActive() const { return pImpl_->amsReady_; }
+bool Esp32AppleClient::dismissNotification(uint32_t uid) {
+    return pImpl_->requestNotificationDismiss(uid);
+}
 void Esp32AppleClient::acceptCall() {
     const uint8_t action = 0;
     pImpl_->enqueue(Impl::CallAction, pImpl_->generation_, &action, 1, pImpl_->publishedCallUid_);

@@ -28,7 +28,7 @@ using BleCallCallback = void (*)(BleCallAction action, const char* caller, const
 using BleMediaCallback = void (*)(bool playing, const char* title, const char* artist, void* userData);
 using BleConnectionCallback = void (*)(bool connected, void* userData);
 // Null title/message remove one UID; null app as well clears the protocol session.
-using BleNotificationCallback = void (*)(const char* title, const char* message, const char* app, uint32_t uid, void* userData);
+using BleNotificationCallback = void (*)(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* userData);
 
 class IBluetooth {
 public:
@@ -62,6 +62,7 @@ public:
     virtual void dial(const char* number) = 0;
 
     virtual void mediaCommand(BleMediaAction action) = 0;
+    virtual bool dismissNotification(uint32_t uid) { (void)uid; return false; }
 };
 
 } // namespace hal

@@ -91,7 +91,7 @@ Ersa Wearable Platform is a modular embedded watch environment. Its core event a
   - Hardware ADC battery monitoring on GPIO2 (A0) with multi-sample averaging and lithium discharge curve mapping.
 - **iPhone ANCS and AMS**:
   - Automatic Apple service discovery after BLE authentication, with separate notification and call queues to handle the initial notification burst.
-  - ANCS notification attributes are reassembled across BLE fragments and matched to their notification UID. Added and modified notifications appear in watch history; B2 dismisses the selected alert locally.
+  - ANCS notification attributes are reassembled across BLE fragments and matched to their notification UID. B2 dismisses the selected alert on the watch, and also sends iOS's advertised action when its label explicitly means “Dismiss” or “Clear.”
   - Incoming calls show caller information when ANCS provides it. B1 sends the available positive action; B2 sends the negative action. ANCS does not provide a complete active-call or dial interface.
   - AMS shows track title, artist, and playback state, and sends supported play/pause and track controls. Call, media, and notification screens share an open monochrome layout.
   - Status reports connection and Apple service readiness. B1 schedules BLE advertising again when disconnected; advertising start is checked and retried after a disconnect.
@@ -138,7 +138,7 @@ Ersa Wearable Platform is a modular embedded watch environment. Its core event a
 | **Incoming call** | Answer | Decline | Return to Clock | Decline |
 | **Now playing** | Next track | Play / pause | Return to Drawer | Previous track |
 
-Notification dismissal removes the selected alert from the watch's history. ANCS does not provide a general command to remove an arbitrary notification from iOS. Later updates for a locally dismissed UID stay hidden until iOS removes that UID or a new ANCS session begins.
+Notification dismissal always removes the selected alert from the watch's history. When iOS advertises a negative ANCS action labeled “Dismiss” or “Clear,” the watch also requests that action on the phone. Other negative actions are left untouched; ANCS actions vary by notification and are not a universal remove command. Later updates for a locally dismissed UID stay hidden until iOS removes that UID or a new ANCS session begins.
 
 ---
 

@@ -144,7 +144,7 @@ void render(Adafruit_GFX& display, bool full) {
     } else {
         WatchText::line(display, "hold b1: back", 18, 168, 164);
     }
-    WatchText::line(display, "b2: dismiss", 18, 186, 164);
+    WatchText::line(display, notif.canDismissRemotely ? "b2: dismiss on phone" : "b2: dismiss", 18, 186, 164);
 }
 
 } // namespace AppNotifications

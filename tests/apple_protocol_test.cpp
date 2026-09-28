@@ -28,6 +28,26 @@ void test_apple_protocols() {
     AncsAttributes::request(uid, request);
     const uint8_t expected[] = {0, 0xef, 0xcd, 0xab, 0x89, 1, 31, 0, 3, 63, 0};
     assert(memcmp(request, expected, sizeof(request)) == 0);
+
+    const uint8_t dismissalResponse[] = {0, 0xef, 0xcd, 0xab, 0x89,
+        1, 5, 0, 'A','l','i','c','e', 3, 5, 0, 'H','e','l','l','o',
+        7, 5, 0, 'C','l','e','a','r'};
+    uint8_t actionRequest[14];
+    AncsAttributes::request(uid, true, actionRequest);
+    const uint8_t expectedActionRequest[] = {0, 0xef, 0xcd, 0xab, 0x89,
+        1, 31, 0, 3, 63, 0, 7, 31, 0};
+    assert(memcmp(actionRequest, expectedActionRequest, sizeof(actionRequest)) == 0);
+    parser.begin(uid, true);
+    for (size_t i = 0; i < sizeof(dismissalResponse); ++i)
+        assert(parser.feed(dismissalResponse + i, 1) ==
+            (i + 1 == sizeof(dismissalResponse) ? AncsAttributes::Result::Complete : AncsAttributes::Result::More));
+    assert(parser.negativeActionIsDismissal());
+    const uint8_t destructiveResponse[] = {0, 0xef, 0xcd, 0xab, 0x89,
+        1, 5, 0, 'A','l','i','c','e', 3, 5, 0, 'H','e','l','l','o',
+        7, 6, 0, 'D','e','l','e','t','e'};
+    parser.begin(uid, true);
+    assert(parser.feed(destructiveResponse, sizeof(destructiveResponse)) == AncsAttributes::Result::Complete);
+    assert(!parser.negativeActionIsDismissal());
     parser.begin(uid + 1);
     assert(parser.feed(response.data(), response.size()) == AncsAttributes::Result::Invalid);
     parser.begin(uid);

@@ -92,6 +92,7 @@ struct NotificationPayload {
     char message[64];
     char app[20];
     uint32_t uid;
+    bool canDismissRemotely;
 };
 
 struct Event {
@@ -178,9 +179,10 @@ struct Event {
         return e;
     }
 
-    static Event createNotification(const char* title, const char* message, const char* app = "", uint32_t uid = 0, uint32_t ts = 0) {
+    static Event createNotification(const char* title, const char* message, const char* app = "", uint32_t uid = 0, uint32_t ts = 0, bool canDismissRemotely = false) {
         Event e(EventType::NotificationReceived, ts);
         e.notification.uid = uid;
+        e.notification.canDismissRemotely = canDismissRemotely;
         e.notification.title[0] = '\0';
         e.notification.message[0] = '\0';
         e.notification.app[0] = '\0';

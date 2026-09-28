@@ -455,6 +455,10 @@ void Esp32Bluetooth::mediaCommand(BleMediaAction action) {
     }
 }
 
+bool Esp32Bluetooth::dismissNotification(uint32_t uid) {
+    return pImpl_ && pImpl_->appleClient_.dismissNotification(uid);
+}
+
 } // namespace hal
 } // namespace ersa
 
@@ -502,6 +506,7 @@ void Esp32Bluetooth::rejectCall() {}
 void Esp32Bluetooth::hangupCall() {}
 void Esp32Bluetooth::dial(const char*) {}
 void Esp32Bluetooth::mediaCommand(BleMediaAction) {}
+bool Esp32Bluetooth::dismissNotification(uint32_t) { return false; }
 
 } // namespace hal
 } // namespace ersa

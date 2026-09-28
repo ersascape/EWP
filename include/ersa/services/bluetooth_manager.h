@@ -26,6 +26,7 @@ struct AppNotification {
     char app[20];
     uint32_t uid;
     uint32_t timestampEpoch;
+    bool canDismissRemotely;
 };
 
 class BluetoothManager {
@@ -85,14 +86,14 @@ public:
     size_t getNotificationCount() const { return notifCount_; }
     const AppNotification& getNotification(size_t index) const;
     bool dismissNotification(size_t index);
-    void addNotification(const char* title, const char* message, const char* app, uint32_t uid);
+    void addNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely = false);
     void clearNotifications();
 
 private:
     static void onBleCall(hal::BleCallAction action, const char* caller, const char* number, void* user);
     static void onBleMedia(bool playing, const char* title, const char* artist, void* user);
     static void onBleConnection(bool connected, void* user);
-    static void onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, void* user);
+    static void onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user);
 
     void receive(const events::Event& event);
     void apply(const events::Event& event);
