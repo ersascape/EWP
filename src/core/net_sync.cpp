@@ -146,7 +146,13 @@ String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, 
     s.trim();
     if (s.isEmpty()) return "";
 
-    if (s.indexOf("?export") != -1) {
+    // Support webcal:// URLs by converting to https://
+    if (s.startsWith("webcal://")) {
+        s = "https://" + s.substring(9);
+    }
+
+    // Direct ICS file link
+    if (s.endsWith(".ics") || s.indexOf(".ics?") != -1 || s.indexOf("?export") != -1) {
         return s;
     }
 
@@ -209,6 +215,8 @@ uint32_t parseIcsDateTimeToEpoch(const char* dt, int tzOffsetMin) {
     return epoch;
 }
 
+static String s_caldavCookie = "";
+
 bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String& url,
                       const WatchConfig::Config& cfg,
                       size_t& outEvents, size_t& outTodos) {
@@ -227,10 +235,53 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     }
     https.setTimeout(ersa::config::CALDAV_HTTP_TIMEOUT_MS);
 
-    const int code = https.GET();
+    // Essential Nextcloud / SabreDAV API headers to bypass CSRF strict cookie check
+    https.addHeader("OCS-APIRequest", "true");
+    https.addHeader("X-Requested-With", "XMLHttpRequest");
+    https.addHeader("User-Agent", "ErsaWearable/1.0 (CalDAV client)");
+    https.addHeader("Accept", "text/calendar, text/plain, */*");
+
+    if (s_caldavCookie.length() > 0) {
+        https.addHeader("Cookie", s_caldavCookie.c_str());
+    }
+
+    const char* headerKeys[] = {"Set-Cookie", "Content-Type"};
+    https.collectHeaders(headerKeys, 2);
+
+    int code = https.GET();
     DebugLog::log("NET: ICS GET code=%d", code);
 
+    if (https.hasHeader("Set-Cookie")) {
+        String sc = https.header("Set-Cookie");
+        int semi = sc.indexOf(';');
+        s_caldavCookie = (semi != -1) ? sc.substring(0, semi) : sc;
+        DebugLog::log("NET: Captured session cookie: %s", s_caldavCookie.c_str());
+    }
+
+    // If Nextcloud returned 412 (Strict Cookie missing) and sent a cookie, retry with the cookie
+    if (code == 412 && s_caldavCookie.length() > 0) {
+        https.end();
+        if (https.begin(client, url)) {
+            https.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+            if (cfg.caldavUser[0] != '\0' && cfg.caldavPass[0] != '\0') {
+                https.setAuthorization(cfg.caldavUser, cfg.caldavPass);
+            }
+            https.setTimeout(ersa::config::CALDAV_HTTP_TIMEOUT_MS);
+            https.addHeader("OCS-APIRequest", "true");
+            https.addHeader("X-Requested-With", "XMLHttpRequest");
+            https.addHeader("User-Agent", "ErsaWearable/1.0 (CalDAV client)");
+            https.addHeader("Accept", "text/calendar, text/plain, */*");
+            https.addHeader("Cookie", s_caldavCookie.c_str());
+            code = https.GET();
+            DebugLog::log("NET: ICS GET retry code=%d", code);
+        }
+    }
+
     if (code != 200) {
+        String err = https.getString();
+        if (err.length() > 0) {
+            DebugLog::log("NET: ICS error body: %s", err.substring(0, 100).c_str());
+        }
         https.end();
         return false;
     }

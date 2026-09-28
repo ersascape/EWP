@@ -57,7 +57,7 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 
 <h3>CalDAV (Nextcloud / Cloud)</h3>
 <label>Server URL</label>
-<input type="text" name="dav_srv" value="%DAV_SRV%" placeholder="https://murena.io/remote.php/dav">
+<input type="text" name="dav_srv" value="%DAV_SRV%" placeholder="https://cloud.example.com/remote.php/dav">
 <label>Username</label>
 <input type="text" name="dav_usr" value="%DAV_USR%">
 <label>App Password / Token</label>
@@ -65,19 +65,19 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 
 <label>Events Calendar</label>
 <div style="display:flex;gap:6px;margin-bottom:6px;">
-<button type="button" onclick="document.getElementById('cal_input').value='murena-team'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Murena Team</button>
 <button type="button" onclick="document.getElementById('cal_input').value='personal'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Personal</button>
+<button type="button" onclick="document.getElementById('cal_input').value='work'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Work</button>
 <button type="button" onclick="document.getElementById('cal_input').value='tasks'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Tasks</button>
 </div>
-<input type="text" id="cal_input" name="dav_cal" value="%DAV_CAL%" placeholder="murena-team or personal or full URL">
+<input type="text" id="cal_input" name="dav_cal" value="%DAV_CAL%" placeholder="personal or work or tasks or full URL">
 
 <label>Tasks / Todo Calendar</label>
 <div style="display:flex;gap:6px;margin-bottom:6px;">
-<button type="button" onclick="document.getElementById('tod_input').value='tasks'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Tasks</button>
-<button type="button" onclick="document.getElementById('tod_input').value='murena-team'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Murena Team</button>
 <button type="button" onclick="document.getElementById('tod_input').value='personal'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Personal</button>
+<button type="button" onclick="document.getElementById('tod_input').value='tasks'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Tasks</button>
+<button type="button" onclick="document.getElementById('tod_input').value='work'" style="padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #ccc;background:#eee;cursor:pointer;">Work</button>
 </div>
-<input type="text" id="tod_input" name="dav_tod" value="%DAV_TOD%" placeholder="tasks or murena-team or personal">
+<input type="text" id="tod_input" name="dav_tod" value="%DAV_TOD%" placeholder="personal or tasks or work or full URL">
 
 <h3>Clock & Time Format</h3>
 <label>Time Display Mode</label>

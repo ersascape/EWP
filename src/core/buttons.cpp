@@ -18,9 +18,8 @@ void push(Buttons::Event event) {
     static Buttons::Event lastEvent = Buttons::Event::None;
     const uint32_t now = millis();
 
-    // Suppress rapid duplicate events of the same type within 400ms.
-    // This prevents switch release bounce or SPI crosstalk from double-triggering navigation.
-    if (event == lastEvent && (now - lastEventTime) < 400) {
+    // Suppress rapid switch bounce within 80ms while allowing crisp sequential clicks
+    if (event == lastEvent && (now - lastEventTime) < 80) {
         DebugLog::log("BUTTON suppressed duplicate %s (%lu ms)",
                       Buttons::name(event), (unsigned long)(now - lastEventTime));
         return;
@@ -61,13 +60,17 @@ void Buttons::begin() {
     pinMode(Pins::BUTTON_1, INPUT_PULLUP);
     pinMode(Pins::BUTTON_2, INPUT_PULLUP);
 
-    // 50ms solid debounce for wearable tactile buttons
-    top.setDebounceMs(50);
-    bottom.setDebounceMs(50);
-    top.setPressMs(800);
-    bottom.setPressMs(800);
+    // Fast, responsive 20ms debounce for crisp tactile wearable clicks
+    top.setDebounceMs(20);
+    bottom.setDebounceMs(20);
 
-    // Fast, crisp single-click without double-click latency/lingering
+    // Immediate single click: fire within 10ms of release instead of waiting 400ms!
+    top.setClickMs(10);
+    bottom.setClickMs(10);
+
+    top.setPressMs(450);
+    bottom.setPressMs(450);
+
     top.attachClick(onTopClick);
     top.attachLongPressStart(onTopLongPress);
 

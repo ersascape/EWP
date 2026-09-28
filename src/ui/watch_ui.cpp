@@ -171,11 +171,15 @@ void WatchUi::tick() {
 
     const bool displayBusy = board.getEsp32Display().isBusy();
     const uint32_t timeSinceRender = (nowMs >= lastFrameEnd) ? (nowMs - lastFrameEnd) : 0;
-    if (appManager.isDirty() && !displayBusy && (timeSinceRender >= 150)) {
+    if (appManager.isDirty() && !displayBusy && (timeSinceRender >= 20)) {
         renderCurrentApp();
         appManager.clearDirty();
-        nowMs = millis(); // Refresh timestamp immediately after rendering finishes
+        nowMs = millis();
     }
 
-    delay(10); // Yield to FreeRTOS idle task: rock-solid stability, no sleep crashes
+    if (!appManager.isDirty() && !Buttons::hasPendingEvents()) {
+        delay(10); // Yield to FreeRTOS idle task when idle
+    } else {
+        delay(1);  // Ultra-fast 1ms loop response during button/UI interaction
+    }
 }

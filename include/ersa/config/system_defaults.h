@@ -50,10 +50,10 @@ inline constexpr uint16_t   DEFAULT_AP_TIMEOUT_SEC = 180;
 inline constexpr const char* DEFAULT_CALDAV_SERVER    = "";
 inline constexpr const char* DEFAULT_CALDAV_USER      = "";
 inline constexpr const char* DEFAULT_CALDAV_PASS      = "";
-inline constexpr const char* DEFAULT_CALDAV_CALENDAR  = "murena-team";
+inline constexpr const char* DEFAULT_CALDAV_CALENDAR  = "personal";
 inline constexpr const char* FALLBACK_CALDAV_CALENDAR = "personal";
-inline constexpr const char* DEFAULT_CALDAV_TODO      = "tasks";
-inline constexpr const char* FALLBACK_CALDAV_TODO      = "personal";
+inline constexpr const char* DEFAULT_CALDAV_TODO      = "personal";
+inline constexpr const char* FALLBACK_CALDAV_TODO      = "tasks";
 
 // Timezone and Display Localization Defaults
 inline constexpr int16_t DEFAULT_TIMEZONE_OFFSET_MIN = 330; // +05:30 (IST)
