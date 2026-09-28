@@ -218,6 +218,13 @@ bash scripts/pio.sh device monitor
 
 ---
 
+## Adding Support for New Boards
+
+Ersa OS is designed to be hardware-agnostic. To add support for a new board, display, or MCU, see the comprehensive guide:
+- 📖 [**Adding Board Support to Ersa OS**](docs/ADDING_A_BOARD.md)
+
+---
+
 ## License
 
-MIT License. Designed and crafted for the open-source hardware community.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. Designed and crafted for the open-source hardware community.
