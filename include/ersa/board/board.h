@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ersa/common/types.h"
+#include "ersa/board/board_config.h"
 #include "ersa/hal/display.h"
 #include "ersa/hal/rtc.h"
 #include "ersa/hal/battery.h"
@@ -15,6 +16,11 @@ public:
 
     virtual Result<void> init() = 0;
     virtual const char* getName() const = 0;
+    virtual const BoardConfig& getConfig() const = 0;
+
+    const BoardCapabilities& capabilities() const {
+        return getConfig().capabilities;
+    }
 
     virtual hal::IDisplay& getDisplay() = 0;
     virtual hal::IRtc& getRtc() = 0;

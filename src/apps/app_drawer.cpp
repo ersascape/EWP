@@ -1,6 +1,7 @@
 #include "app_drawer.h"
 #include "core/debug_log.h"
 #include "fonts/misans_fonts.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 
 namespace AppDrawer {
@@ -9,12 +10,12 @@ namespace {
 Item currentSelection = Item::Calendar;
 
 const char* const labels[static_cast<size_t>(Item::Count)] = {
-    "clock",
-    "calendar",
-    "agenda",
-    "tasks",
-    "hotspot",
-    "status"
+    ersa::strings::APP_TITLE_CLOCK,
+    ersa::strings::APP_TITLE_CALENDAR,
+    ersa::strings::APP_TITLE_AGENDA,
+    ersa::strings::APP_TITLE_TASKS,
+    ersa::strings::APP_TITLE_HOTSPOT,
+    ersa::strings::APP_TITLE_STATUS
 };
 
 } // namespace
@@ -54,7 +55,7 @@ void render(Adafruit_GFX& display) {
     // Clean left-aligned lowercase header
     display.setFont(&MiSansLatin_Bold10pt7b);
     display.setCursor(18, 24);
-    display.print("apps");
+    display.print(ersa::strings::APP_DRAWER_HEADER);
 
     constexpr int16_t startY = 46;
     constexpr int16_t rowHeight = 21;
@@ -80,7 +81,7 @@ void render(Adafruit_GFX& display) {
     // Minimal footer without harsh dividing lines
     display.setFont(&MiSansLatin_Regular8pt7b);
     display.setCursor(18, 186);
-    display.print("scroll B1   select B2");
+    display.print(ersa::strings::NAV_DRAWER_FOOTER);
 }
 
 } // namespace AppDrawer

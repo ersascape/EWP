@@ -28,6 +28,7 @@ public:
 
     // Marks the display as needing a render
     void markDirty(bool fullRefresh = false);
+    void clearDirty();
     bool isDirty() const;
     bool isFullRefreshNeeded() const;
 

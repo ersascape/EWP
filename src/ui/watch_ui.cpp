@@ -33,17 +33,17 @@ ersa::events::Event toErsaInputEvent(Buttons::Event legacy) {
     using namespace ersa::events;
     switch (legacy) {
         case Buttons::Event::Next:
-            return Event::createInput(ButtonId::Button1, ButtonAction::Click, millis());
+            return Event::createButton(EventType::ButtonClicked, ButtonId::Button1, millis());
         case Buttons::Event::Previous:
-            return Event::createInput(ButtonId::Button1, ButtonAction::DoubleClick, millis());
+            return Event::createButton(EventType::ButtonDoubleClicked, ButtonId::Button1, millis());
         case Buttons::Event::Home:
-            return Event::createInput(ButtonId::Button1, ButtonAction::LongPress, millis());
+            return Event::createButton(EventType::ButtonLongPressed, ButtonId::Button1, millis());
         case Buttons::Event::Action:
-            return Event::createInput(ButtonId::Button2, ButtonAction::Click, millis());
+            return Event::createButton(EventType::ButtonClicked, ButtonId::Button2, millis());
         case Buttons::Event::ActionAlt:
-            return Event::createInput(ButtonId::Button2, ButtonAction::DoubleClick, millis());
+            return Event::createButton(EventType::ButtonDoubleClicked, ButtonId::Button2, millis());
         case Buttons::Event::ActionLong:
-            return Event::createInput(ButtonId::Button2, ButtonAction::LongPress, millis());
+            return Event::createButton(EventType::ButtonLongPressed, ButtonId::Button2, millis());
         default:
             return Event();
     }
@@ -144,7 +144,7 @@ void WatchUi::tick() {
 
     if (appManager.isDirty() && (nowMs - lastFrameEnd >= 550)) {
         renderCurrentApp();
-        appManager.markDirty(false);
+        appManager.clearDirty();
     }
 
     if (panelPowered && (nowMs - lastActivityMs >= 8000)) {

@@ -20,15 +20,14 @@ namespace app {
 namespace {
 
 Buttons::Event toLegacyButtonEvent(const events::Event& event) {
-    if (event.category != events::EventCategory::Input) return Buttons::Event::None;
-    if (event.input.button == events::ButtonId::Button1) {
-        if (event.input.action == events::ButtonAction::Click) return Buttons::Event::Next;
-        if (event.input.action == events::ButtonAction::DoubleClick) return Buttons::Event::Previous;
-        if (event.input.action == events::ButtonAction::LongPress) return Buttons::Event::Home;
-    } else if (event.input.button == events::ButtonId::Button2) {
-        if (event.input.action == events::ButtonAction::Click) return Buttons::Event::Action;
-        if (event.input.action == events::ButtonAction::DoubleClick) return Buttons::Event::ActionAlt;
-        if (event.input.action == events::ButtonAction::LongPress) return Buttons::Event::ActionLong;
+    if (event.button.button == events::ButtonId::Button1) {
+        if (event.type == events::EventType::ButtonClicked) return Buttons::Event::Next;
+        if (event.type == events::EventType::ButtonDoubleClicked) return Buttons::Event::Previous;
+        if (event.type == events::EventType::ButtonLongPressed) return Buttons::Event::Home;
+    } else if (event.button.button == events::ButtonId::Button2) {
+        if (event.type == events::EventType::ButtonClicked) return Buttons::Event::Action;
+        if (event.type == events::EventType::ButtonDoubleClicked) return Buttons::Event::ActionAlt;
+        if (event.type == events::EventType::ButtonLongPressed) return Buttons::Event::ActionLong;
     }
     return Buttons::Event::None;
 }
@@ -39,14 +38,13 @@ public:
     const char* getId() const override { return "app_drawer"; }
     const char* getTitle() const override { return "App Drawer"; }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("watchface_clock");
-            return true;
         } else if (legacy == Buttons::Event::Next) {
             AppDrawer::next();
-            return true;
+            ApplicationManager::instance().markDirty(false);
         } else if (legacy == Buttons::Event::Action) {
             const auto item = AppDrawer::selected();
             switch (item) {
@@ -71,9 +69,7 @@ public:
                 default:
                     break;
             }
-            return true;
         }
-        return false;
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {
@@ -97,13 +93,15 @@ public:
         AppCalendar::resetToCurrentMonth(WatchClock::now());
     }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("app_drawer");
-            return true;
+            return;
         }
-        return AppCalendar::onButton(legacy, WatchClock::now());
+        if (AppCalendar::onButton(legacy, WatchClock::now())) {
+            ApplicationManager::instance().markDirty(false);
+        }
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {
@@ -123,13 +121,15 @@ public:
     const char* getId() const override { return "app_agenda"; }
     const char* getTitle() const override { return "Agenda"; }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("app_drawer");
-            return true;
+            return;
         }
-        return AppAgenda::onButton(legacy);
+        if (AppAgenda::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {
@@ -149,13 +149,15 @@ public:
     const char* getId() const override { return "app_todo"; }
     const char* getTitle() const override { return "Todo"; }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("app_drawer");
-            return true;
+            return;
         }
-        return AppTodo::onButton(legacy);
+        if (AppTodo::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {
@@ -175,13 +177,15 @@ public:
     const char* getId() const override { return "app_portal"; }
     const char* getTitle() const override { return "Hotspot Portal"; }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("app_drawer");
-            return true;
+            return;
         }
-        return AppPortal::onButton(legacy);
+        if (AppPortal::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {
@@ -205,13 +209,15 @@ public:
     const char* getId() const override { return "app_status"; }
     const char* getTitle() const override { return "Status"; }
 
-    bool onEvent(const events::Event& event) override {
+    void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
             ApplicationManager::instance().switchTo("app_drawer");
-            return true;
+            return;
         }
-        return AppStatus::onButton(legacy);
+        if (AppStatus::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
     }
 
     void render(hal::IDisplay& display, bool fullRefresh) override {

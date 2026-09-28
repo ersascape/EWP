@@ -2,32 +2,40 @@
 
 #include "ersa/common/types.h"
 #include "ersa/events/event.h"
+#include "ersa/events/event_bus.h"
 #include "ersa/hal/display.h"
+#include "ersa/ui/canvas.h"
 #include <stdint.h>
 
 namespace ersa {
 namespace app {
 
-class Application {
+class Application : public events::IEventListener {
 public:
     virtual ~Application() = default;
 
     virtual const char* getId() const = 0;
     virtual const char* getTitle() const = 0;
 
+    // Full lifecycle callbacks (Section 5)
+    virtual void onCreate() {}
+    virtual void onStart() {}
+    virtual void onResume() {}
+    virtual void onPause() {}
+    virtual void onStop() {}
+    virtual void onDestroy() {}
+
+    // Compatibility lifecycle hooks
     virtual void onEnter() {}
     virtual void onExit() {}
 
-    // Process event. Return true if state changed and redraw is needed.
-    virtual bool onEvent(const events::Event& event) {
-        (void)event;
-        return false;
-    }
+    // Event handling
+    void onEvent(const events::Event& event) override { (void)event; }
 
-    // Render application UI
-    virtual void render(hal::IDisplay& display, bool fullRefresh) = 0;
+    // Rendering pipeline
+    virtual void render(hal::IDisplay& display, bool fullRefresh) { (void)display; (void)fullRefresh; }
+    virtual void render(ui::Canvas& canvas) { (void)canvas; }
 
-    // Periodic tick if app needs idle processing
     virtual void tick() {}
 };
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "event.h"
-#include "ersa/common/types.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -11,23 +10,34 @@ namespace events {
 using SubscriptionId = uint16_t;
 using EventCallback = void (*)(const Event& event, void* userData);
 
+class IEventListener {
+public:
+    virtual ~IEventListener() = default;
+    virtual void onEvent(const Event& event) = 0;
+};
+
 struct Subscription {
     SubscriptionId id{0};
-    EventCategory category{EventCategory::None}; // None = match all
+    EventType type{EventType::None}; // None = match all events
     EventCallback callback{nullptr};
+    IEventListener* listener{nullptr};
     void* userData{nullptr};
     bool active{false};
 };
 
 class EventBus {
 public:
-    static constexpr size_t MAX_SUBSCRIBERS = 16;
+    static constexpr size_t MAX_SUBSCRIBERS = 24;
     static constexpr size_t MAX_QUEUE = 32;
 
     EventBus();
 
-    // Subscribe to events. Pass category == EventCategory::None to listen to all events.
-    SubscriptionId subscribe(EventCategory category, EventCallback callback, void* userData = nullptr);
+    // Subscribe using function callback
+    SubscriptionId subscribe(EventType type, EventCallback callback, void* userData = nullptr);
+
+    // Subscribe using IEventListener interface
+    SubscriptionId subscribe(EventType type, IEventListener* listener);
+
     bool unsubscribe(SubscriptionId id);
 
     // Synchronous immediate dispatch to matching subscribers
@@ -42,7 +52,6 @@ public:
     // Clear queue and subscriptions
     void clear();
 
-    // Global default bus instance accessor
     static EventBus& instance();
 
 private:

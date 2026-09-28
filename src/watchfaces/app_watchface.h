@@ -16,7 +16,7 @@ public:
 
     void onEnter() override;
     void onExit() override;
-    bool onEvent(const events::Event& event) override;
+    void onEvent(const events::Event& event) override;
     void render(hal::IDisplay& display, bool fullRefresh) override;
 
     static AppWatchface& instance();

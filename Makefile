@@ -10,6 +10,10 @@ TEST_SRCS = \
 	src/ersa/services/time_service.cpp \
 	src/ersa/services/power_manager.cpp \
 	src/ersa/services/display_manager.cpp \
+	src/ersa/services/network_manager.cpp \
+	src/ersa/services/storage_service.cpp \
+	src/ersa/services/logging_service.cpp \
+	src/ersa/services/settings_service.cpp \
 	src/ersa/board.cpp
 
 TEST_BIN = tests/run_tests

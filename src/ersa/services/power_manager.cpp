@@ -1,9 +1,46 @@
 #include "ersa/services/power_manager.h"
+#include <string.h>
 
 namespace ersa {
 namespace services {
 
 static PowerManager* s_powerManagerInstance = nullptr;
+
+WakeLock::WakeLock(const char* tag)
+    : tag_(tag), active_(false) {
+    if (s_powerManagerInstance && tag_) {
+        active_ = s_powerManagerInstance->acquireWakeLockRaw(tag_);
+    }
+}
+
+WakeLock::~WakeLock() {
+    release();
+}
+
+WakeLock::WakeLock(WakeLock&& other) noexcept
+    : tag_(other.tag_), active_(other.active_) {
+    other.tag_ = nullptr;
+    other.active_ = false;
+}
+
+WakeLock& WakeLock::operator=(WakeLock&& other) noexcept {
+    if (this != &other) {
+        release();
+        tag_ = other.tag_;
+        active_ = other.active_;
+        other.tag_ = nullptr;
+        other.active_ = false;
+    }
+    return *this;
+}
+
+void WakeLock::release() {
+    if (active_ && s_powerManagerInstance && tag_) {
+        s_powerManagerInstance->releaseWakeLockRaw(tag_);
+        active_ = false;
+        tag_ = nullptr;
+    }
+}
 
 PowerManager& PowerManager::instance() {
     return *s_powerManagerInstance;
@@ -14,7 +51,11 @@ void PowerManager::setInstance(PowerManager* instance) {
 }
 
 PowerManager::PowerManager(hal::IBattery& battery, events::EventBus& bus)
-    : battery_(battery), bus_(bus) {}
+    : battery_(battery), bus_(bus) {
+    for (size_t i = 0; i < MAX_WAKE_LOCKS; ++i) {
+        wakeLockTags_[i] = nullptr;
+    }
+}
 
 Result<void> PowerManager::init() {
     Result<void> res = battery_.init();
@@ -24,6 +65,47 @@ Result<void> PowerManager::init() {
     cachedConnected_ = battery_.isConnected();
     cachedCharging_ = battery_.isCharging();
     return res;
+}
+
+WakeLock PowerManager::acquireWakeLock(const char* tag) {
+    return WakeLock(tag);
+}
+
+bool PowerManager::acquireWakeLockRaw(const char* tag) {
+    if (!tag) return false;
+    for (size_t i = 0; i < MAX_WAKE_LOCKS; ++i) {
+        if (wakeLockTags_[i] && strcmp(wakeLockTags_[i], tag) == 0) {
+            return true; // Already acquired
+        }
+    }
+    for (size_t i = 0; i < MAX_WAKE_LOCKS; ++i) {
+        if (!wakeLockTags_[i]) {
+            wakeLockTags_[i] = tag;
+            activeWakeLocks_++;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PowerManager::releaseWakeLockRaw(const char* tag) {
+    if (!tag) return false;
+    for (size_t i = 0; i < MAX_WAKE_LOCKS; ++i) {
+        if (wakeLockTags_[i] && strcmp(wakeLockTags_[i], tag) == 0) {
+            wakeLockTags_[i] = nullptr;
+            if (activeWakeLocks_ > 0) activeWakeLocks_--;
+            return true;
+        }
+    }
+    return false;
+}
+
+size_t PowerManager::getActiveWakeLockCount() const {
+    return activeWakeLocks_;
+}
+
+bool PowerManager::hasWakeLocks() const {
+    return activeWakeLocks_ > 0;
 }
 
 void PowerManager::noteActivity(uint32_t currentUptimeMs) {
@@ -54,7 +136,7 @@ void PowerManager::tick(uint32_t currentUptimeMs) {
             cachedConnected_ = conn;
             cachedCharging_ = chg;
 
-            bus_.publish(events::Event::createBatteryUpdate(mv, pct, conn, chg, currentUptimeMs));
+            bus_.publish(events::Event::createBatteryChanged(mv, pct, conn, chg, currentUptimeMs));
         }
     }
 }

@@ -33,7 +33,7 @@ void TimeService::tick(uint32_t currentUptimeMs) {
         if (currentMin != lastMinute_) {
             lastMinute_ = currentMin;
 
-            events::TimeData td;
+            events::TimePayload td;
             td.epoch = tp.epoch;
             td.year = tp.year;
             td.month = tp.month;

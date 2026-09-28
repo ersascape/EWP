@@ -23,9 +23,12 @@ bool ApplicationManager::registerApp(Application* app) {
         }
     }
     apps_[appCount_++] = app;
+    app->onCreate();
+
     if (!activeApp_) {
         activeApp_ = app;
-        activeApp_->onEnter();
+        activeApp_->onStart();
+        activeApp_->onResume();
         markDirty(true);
     }
     return true;
@@ -47,11 +50,13 @@ bool ApplicationManager::switchTo(size_t index) {
     if (target == activeApp_) return true;
 
     if (activeApp_) {
-        activeApp_->onExit();
+        activeApp_->onPause();
+        activeApp_->onStop();
     }
     activeApp_ = target;
     if (activeApp_) {
-        activeApp_->onEnter();
+        activeApp_->onStart();
+        activeApp_->onResume();
     }
     markDirty(false);
     return true;
@@ -72,11 +77,9 @@ Application* ApplicationManager::getApp(size_t index) const {
 
 bool ApplicationManager::handleEvent(const events::Event& event) {
     if (!activeApp_) return false;
-    const bool handled = activeApp_->onEvent(event);
-    if (handled) {
-        markDirty(false);
-    }
-    return handled;
+    activeApp_->onEvent(event);
+    markDirty(false);
+    return true;
 }
 
 void ApplicationManager::markDirty(bool fullRefresh) {
@@ -84,6 +87,11 @@ void ApplicationManager::markDirty(bool fullRefresh) {
     if (fullRefresh) {
         fullRefreshNeeded_ = true;
     }
+}
+
+void ApplicationManager::clearDirty() {
+    dirty_ = false;
+    fullRefreshNeeded_ = false;
 }
 
 bool ApplicationManager::isDirty() const {

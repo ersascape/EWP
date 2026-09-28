@@ -2,6 +2,8 @@
 #include "watch_config.h"
 #include "watch_clock.h"
 #include "debug_log.h"
+#include "ersa/config/system_defaults.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -23,7 +25,7 @@ size_t numTodos = 0;
 bool syncing = false;
 char statusMsg[48] = "Ready";
 Preferences cachePrefs;
-constexpr const char* CACHE_NS = "net_cache";
+constexpr const char* CACHE_NS = ersa::config::PREFS_NS_CACHE;
 
 void safeCopy(char* dest, const char* src, size_t maxLen) {
     if (!dest || maxLen == 0) return;
@@ -54,8 +56,12 @@ void loadDefaultsIfEmpty() {
 
 void saveCache() {
     if (cachePrefs.begin(CACHE_NS, false)) {
+        const DateTime now = WatchClock::now();
         cachePrefs.putBytes("events", events, sizeof(events));
         cachePrefs.putUChar("ev_cnt", (uint8_t)numEvents);
+        cachePrefs.putUShort("ev_yr", now.year());
+        cachePrefs.putUChar("ev_mo", now.month());
+        cachePrefs.putUChar("ev_dy", now.day());
         cachePrefs.putBytes("todos", todos, sizeof(todos));
         cachePrefs.putUChar("td_cnt", (uint8_t)numTodos);
         cachePrefs.end();
@@ -67,10 +73,22 @@ void loadCache() {
     if (cachePrefs.begin(CACHE_NS, true)) {
         hasInitializedCache = cachePrefs.isKey("ev_cnt");
         if (hasInitializedCache) {
-            numEvents = cachePrefs.getUChar("ev_cnt", 0);
-            if (numEvents > MAX_EVENTS) numEvents = 0;
-            if (numEvents > 0) {
-                cachePrefs.getBytes("events", events, sizeof(events));
+            const DateTime now = WatchClock::now();
+            uint16_t cachedYr = cachePrefs.getUShort("ev_yr", 0);
+            uint8_t cachedMo = cachePrefs.getUChar("ev_mo", 0);
+            uint8_t cachedDy = cachePrefs.getUChar("ev_dy", 0);
+
+            // Only restore cached events if they are strictly for today!
+            if (cachedYr == now.year() && cachedMo == now.month() && cachedDy == now.day()) {
+                numEvents = cachePrefs.getUChar("ev_cnt", 0);
+                if (numEvents > MAX_EVENTS) numEvents = 0;
+                if (numEvents > 0) {
+                    cachePrefs.getBytes("events", events, sizeof(events));
+                }
+            } else {
+                numEvents = 0;
+                DebugLog::log("NET: Cached events expired (cached %04u-%02u-%02u vs today %04u-%02u-%02u)",
+                              cachedYr, cachedMo, cachedDy, now.year(), now.month(), now.day());
             }
 
             numTodos = cachePrefs.getUChar("td_cnt", 0);
@@ -89,23 +107,23 @@ void loadCache() {
 
 bool connectWiFi(const WatchConfig::Config& cfg) {
     if (cfg.wifiSsid[0] == '\0') {
-        safeCopy(statusMsg, "WiFi SSID not set", sizeof(statusMsg));
+        safeCopy(statusMsg, ersa::strings::MSG_WIFI_NO_SSID, sizeof(statusMsg));
         DebugLog::log("NET: WiFi SSID empty; configure via Hotspot");
         return false;
     }
 
-    safeCopy(statusMsg, "Connecting WiFi...", sizeof(statusMsg));
+    safeCopy(statusMsg, ersa::strings::MSG_WIFI_CONNECTING, sizeof(statusMsg));
     DebugLog::log("NET: Connecting to '%s'", cfg.wifiSsid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
 
     const uint32_t startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < 9000) {
+    while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < ersa::config::WIFI_CONNECT_TIMEOUT_MS) {
         delay(200);
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        safeCopy(statusMsg, "WiFi Connect Failed", sizeof(statusMsg));
+        safeCopy(statusMsg, ersa::strings::MSG_WIFI_FAILED, sizeof(statusMsg));
         DebugLog::log("NET: WiFi connect timeout");
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
@@ -281,17 +299,28 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
 
                 // Check recurring rules (e.g. daily, weekly)
                 if (!isToday && curRrule[0] != '\0' && startEpoch < dayEndSec) {
-                    if (strstr(curRrule, "FREQ=DAILY")) {
-                        isToday = true;
-                    } else if (strstr(curRrule, "FREQ=WEEKLY")) {
-                        static const char* const dowCodes[] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
-                        const char* todayCode = dowCodes[now.dayOfTheWeek() % 7];
-                        const char* byDay = strstr(curRrule, "BYDAY=");
-                        if (byDay) {
-                            if (strstr(byDay, todayCode)) isToday = true;
-                        } else {
-                            DateTime origStart(startEpoch);
-                            if (origStart.dayOfTheWeek() == now.dayOfTheWeek()) isToday = true;
+                    bool expired = false;
+                    const char* untilPtr = strstr(curRrule, "UNTIL=");
+                    if (untilPtr) {
+                        uint32_t untilEpoch = parseIcsDateTimeToEpoch(untilPtr + 6, cfg.timezoneOffsetMin);
+                        if (untilEpoch > 0 && untilEpoch < dayStartSec) {
+                            expired = true;
+                        }
+                    }
+
+                    if (!expired) {
+                        if (strstr(curRrule, "FREQ=DAILY")) {
+                            isToday = true;
+                        } else if (strstr(curRrule, "FREQ=WEEKLY")) {
+                            static const char* const dowCodes[] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
+                            const char* todayCode = dowCodes[now.dayOfTheWeek() % 7];
+                            const char* byDay = strstr(curRrule, "BYDAY=");
+                            if (byDay) {
+                                if (strstr(byDay, todayCode)) isToday = true;
+                            } else {
+                                DateTime origStart(startEpoch);
+                                if (origStart.dayOfTheWeek() == now.dayOfTheWeek()) isToday = true;
+                            }
                         }
                     }
                 }
@@ -377,26 +406,157 @@ void toggleTodo(size_t index) {
 bool isSyncing() { return syncing; }
 const char* lastStatus() { return statusMsg; }
 
-bool fetchNtpUtc(time_t& outUtc, uint32_t timeoutMs = 8000) {
+time_t parseHttpDateToEpoch(const char* str) {
+    if (!str || strlen(str) < 16) return 0;
+
+    // Format: "Mon, 28 Sep 2026 06:21:00 GMT" or "28 Sep 2026 06:21:00 GMT"
+    const char* p = strchr(str, ',');
+    p = p ? (p + 1) : str;
+
+    while (*p == ' ') p++;
+    int day = atoi(p);
+    if (day < 1 || day > 31) return 0;
+
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+
+    static const char* const months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    int month = 0;
+    for (int m = 0; m < 12; ++m) {
+        if (strncasecmp(p, months[m], 3) == 0) {
+            month = m + 1;
+            break;
+        }
+    }
+    if (month == 0) return 0;
+
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+
+    int year = atoi(p);
+    if (year < 2024 || year > 2099) return 0;
+
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+
+    int hour = atoi(p);
+    p = strchr(p, ':');
+    if (!p) return 0;
+    int min = atoi(p + 1);
+    p = strchr(p + 1, ':');
+    if (!p) return 0;
+    int sec = atoi(p + 1);
+
+    DateTime dt(year, month, day, hour, min, sec);
+    return dt.unixtime();
+}
+
+bool fetchHttpUtc(time_t& outUtc, uint32_t timeoutMs = ersa::config::HTTP_TIME_TIMEOUT_MS) {
+    HTTPClient http;
+    const char* headerKeys[] = {"Date"};
+
+    for (size_t i = 0; i < ersa::config::NUM_HTTP_TIME_ENDPOINTS; ++i) {
+        const char* endpoint = ersa::config::DEFAULT_HTTP_TIME_ENDPOINTS[i];
+        DebugLog::log("NET: Trying HTTP time fallback [%u]: %s", unsigned(i), endpoint);
+
+        if (!http.begin(endpoint)) continue;
+        http.setTimeout(timeoutMs);
+        http.collectHeaders(headerKeys, 1);
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+        const int httpCode = http.GET();
+        if (httpCode > 0) {
+            if (http.hasHeader("Date")) {
+                String dateHdr = http.header("Date");
+                DebugLog::log("NET: HTTP %s returned code %d, Date: '%s'", endpoint, httpCode, dateHdr.c_str());
+                time_t parsedUtc = parseHttpDateToEpoch(dateHdr.c_str());
+                if (parsedUtc >= 1700000000) {
+                    outUtc = parsedUtc;
+                    http.end();
+                    return true;
+                }
+            }
+
+            // Check JSON for unixtime
+            if (httpCode == 200 && http.getSize() > 0) {
+                String body = http.getString();
+                int idx = body.indexOf("\"unixtime\":");
+                if (idx != -1) {
+                    const char* numPtr = body.c_str() + idx + 11;
+                    while (*numPtr == ' ') numPtr++;
+                    uint32_t unixTime = strtoul(numPtr, nullptr, 10);
+                    if (unixTime >= 1700000000) {
+                        outUtc = unixTime;
+                        http.end();
+                        return true;
+                    }
+                }
+            }
+        }
+        http.end();
+    }
+    return false;
+}
+
+static volatile bool s_sntpSynced = false;
+void sntpTimeSyncNotification(struct timeval* tv) {
+    (void)tv;
+    s_sntpSynced = true;
+    DebugLog::log("NET: SNTP packet received and processed");
+}
+
+bool fetchNtpUtc(time_t& outUtc, uint32_t timeoutMs = ersa::config::NTP_SYNC_TIMEOUT_MS) {
+    s_sntpSynced = false;
     if (esp_sntp_enabled()) {
         esp_sntp_stop();
     }
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
-    esp_sntp_setservername(1, "time.google.com");
+    for (size_t i = 0; i < ersa::config::NUM_NTP_SERVERS && i < 3; ++i) {
+        esp_sntp_setservername(i, ersa::config::DEFAULT_NTP_SERVERS[i]);
+        DebugLog::log("NET: Set NTP server[%u] = %s", unsigned(i), ersa::config::DEFAULT_NTP_SERVERS[i]);
+    }
     sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
     sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+    sntp_set_time_sync_notification_cb(sntpTimeSyncNotification);
     esp_sntp_init();
 
     const uint32_t startMs = millis();
-    while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && (millis() - startMs) < timeoutMs) {
+    while ((millis() - startMs) < timeoutMs) {
+        if (s_sntpSynced || sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+            outUtc = time(nullptr);
+            if (outUtc >= 1700000000) return true;
+        }
+        time_t tNow = time(nullptr);
+        if (tNow >= 1700000000) {
+            outUtc = tNow;
+            return true;
+        }
         delay(100);
     }
+    return false;
+}
 
-    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-        outUtc = time(nullptr);
+bool fetchTimeWithFallbacks(time_t& outUtc, bool& isHttpFallback) {
+    isHttpFallback = false;
+    safeCopy(statusMsg, ersa::strings::MSG_SYNCING_NTP, sizeof(statusMsg));
+
+    DebugLog::log("NET: Step 1: Trying SNTP pool sync (UDP port 123)...");
+    if (fetchNtpUtc(outUtc, ersa::config::NTP_SYNC_TIMEOUT_MS)) {
+        DebugLog::log("NET: Primary SNTP sync SUCCESS (utc=%lu)", (unsigned long)outUtc);
         return true;
     }
+
+    DebugLog::log("NET: SNTP sync timed out/blocked; Step 2: Falling back to HTTP Time endpoints (TCP port 80)...");
+    if (fetchHttpUtc(outUtc, ersa::config::HTTP_TIME_TIMEOUT_MS)) {
+        isHttpFallback = true;
+        DebugLog::log("NET: HTTP Time fallback SUCCESS (utc=%lu)", (unsigned long)outUtc);
+        return true;
+    }
+
+    DebugLog::log("NET: All network time synchronization methods failed");
     return false;
 }
 
@@ -409,19 +569,19 @@ bool syncNtp() {
         return false;
     }
 
-    safeCopy(statusMsg, "Syncing NTP...", sizeof(statusMsg));
-    DebugLog::log("NET: Requesting NTP time (tz offset %d min)", cfg.timezoneOffsetMin);
     time_t utcEpoch = 0;
-    bool success = fetchNtpUtc(utcEpoch, 8000);
+    bool isHttpFallback = false;
+    bool success = fetchTimeWithFallbacks(utcEpoch, isHttpFallback);
     if (success) {
         const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
         WatchClock::setEpoch(localEpoch);
-        safeCopy(statusMsg, "NTP Time Synced", sizeof(statusMsg));
-        DebugLog::log("NET: NTP sync SUCCESS utc=%lu local=%lu (tzOffset=%d min)",
+        safeCopy(statusMsg, isHttpFallback ? ersa::strings::MSG_HTTP_TIME_SYNCED : ersa::strings::MSG_NTP_SYNCED, sizeof(statusMsg));
+        DebugLog::log("NET: Time sync SUCCESS (method=%s, utc=%lu, local=%lu, tzOffset=%d min)",
+                      isHttpFallback ? "HTTP" : "SNTP",
                       (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
     } else {
-        safeCopy(statusMsg, "NTP Timeout", sizeof(statusMsg));
-        DebugLog::log("NET: NTP sync timeout");
+        safeCopy(statusMsg, ersa::strings::MSG_TIME_SYNC_FAILED, sizeof(statusMsg));
+        DebugLog::log("NET: Time sync failed");
     }
 
     disconnectWiFi();
@@ -438,21 +598,22 @@ bool syncAll() {
         return false;
     }
 
-    // 1. Sync NTP time using guaranteed SNTP completed status
-    safeCopy(statusMsg, "Syncing NTP...", sizeof(statusMsg));
+    // 1. Sync time with multi-tier fallbacks
     time_t utcEpoch = 0;
-    if (fetchNtpUtc(utcEpoch, 8000)) {
+    bool isHttpFallback = false;
+    if (fetchTimeWithFallbacks(utcEpoch, isHttpFallback)) {
         const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
         WatchClock::setEpoch(localEpoch);
-        DebugLog::log("NET: NTP synced utc=%lu local=%lu (tzOffset=%d min)",
+        DebugLog::log("NET: Time synced (method=%s, utc=%lu, local=%lu, tzOffset=%d min)",
+                      isHttpFallback ? "HTTP" : "SNTP",
                       (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
     } else {
-        DebugLog::log("NET: NTP sync timeout in syncAll; keeping RTC time");
+        DebugLog::log("NET: Time sync failed in syncAll; keeping RTC time");
     }
 
     // 2. Sync CalDAV (if server URL configured)
     if (cfg.caldavServer[0] != '\0') {
-        safeCopy(statusMsg, "Querying CalDAV...", sizeof(statusMsg));
+        safeCopy(statusMsg, ersa::strings::MSG_QUERYING_CALDAV, sizeof(statusMsg));
         DebugLog::log("NET: Querying CalDAV (srv='%s', user='%s', cal='%s', todo='%s')",
                       cfg.caldavServer, cfg.caldavUser, cfg.caldavCalendar, cfg.caldavTodoPath);
 
@@ -493,11 +654,11 @@ bool syncAll() {
             DebugLog::log("NET: CalDAV sync SUCCESS: %u events for today, %u todos",
                           (unsigned)numEvents, (unsigned)numTodos);
         } else {
-            snprintf(statusMsg, sizeof(statusMsg), "CalDAV HTTP Failed");
+            safeCopy(statusMsg, ersa::strings::MSG_CALDAV_FAILED, sizeof(statusMsg));
             DebugLog::log("NET: CalDAV HTTP request failed");
         }
     } else {
-        safeCopy(statusMsg, "NTP OK (No CalDAV URL)", sizeof(statusMsg));
+        safeCopy(statusMsg, ersa::strings::MSG_SYNC_COMPLETE, sizeof(statusMsg));
     }
 
     disconnectWiFi();

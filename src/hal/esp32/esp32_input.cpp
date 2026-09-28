@@ -20,39 +20,39 @@ void Esp32Input::poll() {
     const auto legacy = Buttons::takeEvent();
     if (legacy == Buttons::Event::None) return;
 
+    events::EventType type = events::EventType::None;
     events::ButtonId btn = events::ButtonId::Unknown;
-    events::ButtonAction act = events::ButtonAction::Click;
 
     switch (legacy) {
         case Buttons::Event::Next:
             btn = events::ButtonId::Button1;
-            act = events::ButtonAction::Click;
+            type = events::EventType::ButtonClicked;
             break;
         case Buttons::Event::Previous:
             btn = events::ButtonId::Button1;
-            act = events::ButtonAction::DoubleClick;
+            type = events::EventType::ButtonDoubleClicked;
             break;
         case Buttons::Event::Home:
             btn = events::ButtonId::Button1;
-            act = events::ButtonAction::LongPress;
+            type = events::EventType::ButtonLongPressed;
             break;
         case Buttons::Event::Action:
             btn = events::ButtonId::Button2;
-            act = events::ButtonAction::Click;
+            type = events::EventType::ButtonClicked;
             break;
         case Buttons::Event::ActionAlt:
             btn = events::ButtonId::Button2;
-            act = events::ButtonAction::DoubleClick;
+            type = events::EventType::ButtonDoubleClicked;
             break;
         case Buttons::Event::ActionLong:
             btn = events::ButtonId::Button2;
-            act = events::ButtonAction::LongPress;
+            type = events::EventType::ButtonLongPressed;
             break;
         default:
             return;
     }
 
-    events::Event evt = events::Event::createInput(btn, act, millis());
+    events::Event evt = events::Event::createButton(type, btn, millis());
     bus_.post(evt);
 }
 

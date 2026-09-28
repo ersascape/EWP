@@ -3,6 +3,7 @@
 #if defined(ARDUINO)
 
 #include "ersa/board/board.h"
+#include "ersa/board/board_config.h"
 #include "hal/esp32/esp32_display.h"
 #include "hal/esp32/esp32_rtc.h"
 #include "hal/esp32/esp32_battery.h"
@@ -18,6 +19,7 @@ public:
 
     Result<void> init() override;
     const char* getName() const override { return "Ampere Works T1E"; }
+    const BoardConfig& getConfig() const override { return config_; }
 
     hal::IDisplay& getDisplay() override { return display_; }
     hal::IRtc& getRtc() override { return rtc_; }
@@ -33,6 +35,7 @@ public:
     static BoardAmpereT1e& instance();
 
 private:
+    BoardConfig config_;
     hal::Esp32Display display_;
     hal::Esp32Rtc rtc_;
     hal::Esp32Battery battery_;

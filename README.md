@@ -1,6 +1,6 @@
 # Ersa Wearable Platform (EWP)
 
-An open-source, minimalist smartwatch firmware for the Ampere Works T1E, inspired by the iconic **Pebble Text Watch** aesthetic.
+An open-source, modular embedded operating environment and minimalist smartwatch firmware for the **Ampere Works T1E**, inspired by the iconic **Pebble Text Watch** aesthetic.
 
 ---
 
@@ -22,22 +22,63 @@ An open-source, minimalist smartwatch firmware for the Ampere Works T1E, inspire
 
 ---
 
+## Ersa OS — Layered Architecture
+
+Ersa OS is designed as a modular, low-power embedded operating environment. The architecture is decoupled so system services, event management, and applications are completely hardware-independent:
+
+```text
+┌─────────────────────────────────────────────────────────┐
+│ Applications                                            │
+│   Watchfaces • Calendar • Agenda • Tasks • Status       │
+└─────────────────────────────────────────────────────────┘
+                            │
+┌─────────────────────────────────────────────────────────┐
+│ Ersa Application Framework                              │
+│   Lifecycle (create/start/resume/pause/stop/destroy)    │
+│   Event Subscription • Complications • Canvas UI API    │
+└─────────────────────────────────────────────────────────┘
+                            │
+┌─────────────────────────────────────────────────────────┐
+│ Ersa System Services                                    │
+│   TimeService • PowerManager (WakeLock RAII)            │
+│   NetworkManager (NetworkHandle RAII) • DisplayManager  │
+│   StorageService • SettingsService • LoggingService     │
+└─────────────────────────────────────────────────────────┘
+                            │
+┌─────────────────────────────────────────────────────────┐
+│ Ersa Platform HAL (Hardware Abstraction Layer)          │
+│   IDisplay • IRtc • IBattery • IInput • INetwork        │
+└─────────────────────────────────────────────────────────┘
+                            │
+┌─────────────────────────────────────────────────────────┐
+│ Board Support Package (BSP)                             │
+│   BoardAmpereT1e (Ampere Works T1E / XIAO ESP32-C3)    │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Key Features
 
 - **Pebble Text Watchface**:
   - Full-bleed black background with pure white typography.
   - Natural time spelled out in English words using Xiaomi's official **MiSans Latin Bold & Light** fonts.
-  - Lowercase natural date with ordinal suffix (e.g. `thursday` / `november 12th, 2020` or `monday` / `september 28th, 2026`).
+  - Lowercase natural date with ordinal suffix (e.g. `monday` / `september 28th, 2026`).
   - Distraction-free: battery or sync alerts only appear when active or low.
 - **Fast, Flicker-Free Partial Refresh**:
   - Panel controller kept energized during user interaction for **~450ms raw partial updates** with zero black/white blinking.
-  - Smooth App Drawer scrolling and instant minute clock updates.
+  - Display refresh bug resolved: screen only redraws on minute ticks, button clicks, or state changes.
   - Automatic low-power sleep after 8 seconds of inactivity.
+- **Multi-Tier Clock Calibration & NTP Fallbacks**:
+  - **Tier 1 (SNTP Pool)**: Multi-server SNTP UDP sync (`pool.ntp.org`, `time.google.com`, `time.cloudflare.com`, `time.apple.com`, `time.nist.gov`).
+  - **Tier 2 (HTTP Time Fallback)**: If UDP port 123 is blocked by a cellular phone hotspot or guest Wi-Fi, the watch automatically falls back to HTTP Date header sync (`clients3.google.com`, `worldtimeapi.org`, `cloudflare.com`) over port 80 TCP, guaranteeing accurate time calibration in any network environment.
+  - Automatically adjusts the onboard **DS3231 RTC** to exact local time with configurable timezone offsets.
 - **Nextcloud & CalDAV Cloud Sync**:
-  - **CalDAV Agenda**: Filters events specifically for **today**, supporting standard events and recurring rules (`FREQ=DAILY`, `FREQ=WEEKLY`).
+  - **CalDAV Agenda**: Filters events specifically for **today**, supporting standard events and recurring rules (`FREQ=DAILY`, `FREQ=WEEKLY`) with `UNTIL` expiration checking.
   - **CalDAV Tasks**: To-do checklist with instant on-watch toggling (`[ ]` $\leftrightarrow$ `[x]`), prioritizing active/open tasks.
-- **NTP Clock Calibration**:
-  - High-precision SNTP synchronization adjusting the onboard **DS3231 RTC** to exact local time with configurable timezone offset.
+  - **Cache Expiration**: Saved events in NVS are automatically validated against the current day, eliminating stale yesterday events.
+- **Centralized String & Fallback Configuration**:
+  - All default URLs, server pools, timeouts, preferences namespaces, and UI labels are maintained in `include/ersa/config/system_defaults.h` and `include/ersa/config/ui_strings.h` — zero hardcoded magic literals in application logic.
 - **On-Demand Captive Portal Hotspot**:
   - Launch `ErsaWatch-Config` AP from the watch drawer to configure Wi-Fi credentials, CalDAV server, calendar presets (`murena-team`, `personal`, `tasks`), timezone, and time format (12h / 24h).
 - **Battery Sensing**:
@@ -49,7 +90,8 @@ An open-source, minimalist smartwatch firmware for the Ampere Works T1E, inspire
 
 | Component | Specification | Details |
 | :--- | :--- | :--- |
-| **MCU** | Seeed Studio XIAO ESP32-C3 | RISC-V 160 MHz, 320 KB SRAM, 4 MB Flash, Wi-Fi & BLE |
+| **Target Board** | Ampere Works T1E | Compact form factor featuring Seeed Studio XIAO ESP32-C3 |
+| **MCU** | ESP32-C3 | RISC-V 160 MHz, 320 KB SRAM, 4 MB Flash, Wi-Fi & BLE |
 | **Display** | 1.54" E-Paper Display | 200×200 Monochrome (GxEPD2 / SSD1681), partial refresh capable |
 | **RTC** | Maxim DS3231 | High-precision I2C RTC (address `0x68`) with backup cell |
 | **Buttons** | Dual tactile switches | Upper `B1` = GPIO4 (D2), Lower `B2` = GPIO3 (D1) |
@@ -86,53 +128,78 @@ An open-source, minimalist smartwatch firmware for the Ampere Works T1E, inspire
 ```
 Ersa-W1/
 ├── include/
-│   ├── board_pins.h           # Hardware pinout definitions
+│   ├── board_pins.h               # Hardware pinout definitions
+│   ├── ersa/
+│   │   ├── app/                   # Application framework & lifecycle
+│   │   ├── board/                 # BSP configurations & interfaces
+│   │   ├── config/                # Centralized system defaults & UI strings
+│   │   ├── events/                # EventBus & typed Event definitions
+│   │   ├── hal/                   # Hardware abstraction interfaces (IDisplay, IRtc, etc.)
+│   │   ├── services/              # System services (Time, Power, Network, Storage)
+│   │   ├── ui/                    # Canvas drawing abstractions
+│   │   └── system.h               # System facade
 │   └── fonts/
-│       └── misans_fonts.h     # MiSans Latin Bold & Light GFX fonts
+│       └── misans_fonts.h         # MiSans Latin Bold & Light GFX fonts
 ├── src/
 │   ├── apps/
-│   │   ├── app_agenda.*       # CalDAV events card viewer
-│   │   ├── app_calendar.*     # Interactive monthly calendar
-│   │   ├── app_drawer.*       # App launcher with white capsule cursor
-│   │   ├── app_portal.*       # Wi-Fi captive configuration portal
-│   │   ├── app_status.*       # Hardware diagnostics & battery stats
-│   │   └── app_todo.*         # CalDAV to-do checklist
+│   │   ├── app_agenda.*           # CalDAV events card viewer
+│   │   ├── app_calendar.*         # Interactive monthly calendar
+│   │   ├── app_drawer.*           # App launcher with white capsule cursor
+│   │   ├── app_portal.*           # Wi-Fi captive configuration portal
+│   │   ├── app_status.*           # Hardware diagnostics & battery stats
+│   │   ├── app_todo.*             # CalDAV to-do checklist
+│   │   └── apps_registry.*        # App registration & Ersa OS bridge
+│   ├── bsp/
+│   │   └── ampere_t1e/            # Ampere Works T1E board support package
 │   ├── core/
-│   │   ├── battery.*          # ADC voltage & battery curve calculations
-│   │   ├── buttons.*          # OneButton debounce & event dispatcher
-│   │   ├── debug_log.*        # USB Serial logging & boot crash records
-│   │   ├── net_sync.*         # NTP time & CalDAV iCalendar parser
-│   │   ├── watch_clock.*      # DS3231 RTC driver & time caching
-│   │   └── watch_config.*     # NVS non-volatile settings storage
+│   │   ├── battery.*              # ADC voltage & battery curve calculations
+│   │   ├── buttons.*              # OneButton debounce & event dispatcher
+│   │   ├── debug_log.*            # USB Serial logging & boot crash records
+│   │   ├── net_sync.*             # NTP & HTTP Time sync, CalDAV parser
+│   │   ├── watch_clock.*          # DS3231 RTC driver & time caching
+│   │   └── watch_config.*         # NVS non-volatile settings storage
+│   ├── ersa/                      # Core OS implementation (EventBus, Services, etc.)
+│   ├── hal/                       # ESP32 concrete HAL implementations
 │   ├── ui/
-│   │   ├── watch_icons.*      # Monochrome bitmaps
-│   │   └── watch_ui.*         # Display controller, refresh scheduler, page routing
+│   │   ├── watch_icons.*          # Monochrome bitmaps
+│   │   └── watch_ui.*             # Display controller & refresh scheduler
 │   ├── watchfaces/
-│   │   └── watchface_clock.*  # Pebble Text Watch watchface
-│   └── main.cpp               # Setup & cooperative event loop
-├── platformio.ini             # PlatformIO build configuration
+│   │   └── watchface_clock.*      # Pebble Text Watch watchface
+│   └── main.cpp                   # System boot & execution loop
+├── tests/
+│   ├── mocks/                     # Mock HAL devices for host unit testing
+│   └── main_test.cpp              # 10 comprehensive unit test suites
+├── platformio.ini                 # PlatformIO build configuration
+├── Makefile                       # Top-level makefile (make firmware / make test)
 └── scripts/
-    └── pio.sh                 # Self-contained PlatformIO CLI bootstrap
+    └── pio.sh                     # Self-contained PlatformIO CLI bootstrap
 ```
 
 ---
 
-## Build & Flash
+## Build & Test Workflow
 
-This project uses a project-local PlatformIO toolchain managed by `scripts/pio.sh`.
-
-### 1. Compile Firmware
+### 1. Run Unit Tests (Host GCC)
+Run the 10 core unit test suites on your development host in < 0.5s:
 ```bash
-bash scripts/pio.sh run
+make test
 ```
 
-### 2. Upload to Watch
-Connect the XIAO ESP32-C3 via USB-C and run:
+### 2. Compile Firmware (Target Board)
+Compile the production firmware using PlatformIO:
 ```bash
+make firmware
+```
+
+### 3. Flash to Device
+Connect the Ampere Works T1E via USB-C and upload:
+```bash
+make flash
+# Or via PlatformIO helper:
 bash scripts/pio.sh run --target upload
 ```
 
-### 3. Serial Monitor
+### 4. Serial Monitor
 ```bash
 bash scripts/pio.sh device monitor
 ```
@@ -147,7 +214,7 @@ bash scripts/pio.sh device monitor
    - **Password**: `12345678`
 3. A captive portal page will automatically open (or navigate to `http://192.168.4.1`).
 4. Enter your home Wi-Fi credentials, Nextcloud/Murena CalDAV URL, username, and app password.
-5. Select **Save & Sync NTP Time**. The watch will connect, calibrate the DS3231 RTC, download your daily events and tasks, and turn off Wi-Fi to conserve power.
+5. Select **Save & Sync NTP Time**. The watch will connect, calibrate the DS3231 RTC (via SNTP or HTTP Date fallback), download your daily events and tasks, and power down the radio to conserve energy.
 
 ---
 

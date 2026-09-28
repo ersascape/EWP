@@ -2,6 +2,7 @@
 #include "core/net_sync.h"
 #include "core/debug_log.h"
 #include "fonts/misans_fonts.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 
 namespace AppAgenda {
@@ -48,7 +49,7 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     // Clean lowercase header
     display.setFont(&MiSansLatin_Bold10pt7b);
     display.setCursor(18, 24);
-    display.print("agenda");
+    display.print(ersa::strings::APP_TITLE_AGENDA);
 
     const size_t total = NetSync::eventCount();
 
@@ -64,14 +65,14 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     if (total == 0) {
         display.setFont(&MiSansLatin_Regular10pt7b);
         display.setCursor(18, 70);
-        display.print("no events today");
+        display.print(ersa::strings::MSG_NO_EVENTS_TODAY);
 
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(18, 96);
-        display.print("press B2 to sync CalDAV");
+        display.print(ersa::strings::MSG_PRESS_SYNC_CALDAV);
 
         display.setCursor(18, 186);
-        display.print("sync B2   menu hold B1");
+        display.print(ersa::strings::NAV_AGENDA_EMPTY_FOOT);
         return;
     }
 
@@ -111,7 +112,7 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     // Clean minimal footer
     display.setFont(&MiSansLatin_Regular8pt7b);
     display.setCursor(18, 186);
-    display.print("scroll B1   sync B2");
+    display.print(ersa::strings::NAV_AGENDA_FOOTER);
 }
 
 } // namespace AppAgenda

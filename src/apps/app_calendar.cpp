@@ -1,6 +1,7 @@
 #include "app_calendar.h"
 #include "core/debug_log.h"
 #include "fonts/misans_fonts.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 
 namespace AppCalendar {
@@ -150,7 +151,7 @@ void render(Adafruit_GFX& display, const DateTime& now) {
     display.setTextColor(1);
     display.setFont(&MiSansLatin_Regular8pt7b);
     display.setCursor(18, 186);
-    display.print("+1 mo B1   today B2");
+    display.print(ersa::strings::NAV_CALENDAR_FOOTER);
 }
 
 } // namespace AppCalendar

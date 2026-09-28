@@ -28,31 +28,22 @@ void AppWatchface::onExit() {
     DebugLog::log("APP: Watchface onExit");
 }
 
-bool AppWatchface::onEvent(const events::Event& event) {
-    if (event.category == events::EventCategory::Input) {
-        if (event.input.button == events::ButtonId::Button1 &&
-            event.input.action == events::ButtonAction::Click) {
-            // Button 1 single click opens Drawer
+void AppWatchface::onEvent(const events::Event& event) {
+    if (event.type == events::EventType::ButtonClicked) {
+        if (event.button.button == events::ButtonId::Button1) {
             app::ApplicationManager::instance().switchTo("app_drawer");
-            return true;
-        } else if (event.input.button == events::ButtonId::Button2 &&
-                   event.input.action == events::ButtonAction::LongPress) {
-            // Button 2 long press opens Drawer
-            app::ApplicationManager::instance().switchTo("app_drawer");
-            return true;
-        } else if (event.input.button == events::ButtonId::Button2 &&
-                   event.input.action == events::ButtonAction::Click) {
-            // Button 2 single click triggers instant CalDAV & NTP sync
+        } else if (event.button.button == events::ButtonId::Button2) {
             NetSync::syncAll();
-            return true;
+            app::ApplicationManager::instance().markDirty(false);
         }
-    } else if (event.category == events::EventCategory::Time) {
-        // Redraw on minute tick
-        return true;
-    } else if (event.category == events::EventCategory::Battery) {
-        return true;
+    } else if (event.type == events::EventType::ButtonLongPressed) {
+        if (event.button.button == events::ButtonId::Button2) {
+            app::ApplicationManager::instance().switchTo("app_drawer");
+        }
+    } else if (event.type == events::EventType::MinuteTick ||
+               event.type == events::EventType::BatteryChanged) {
+        app::ApplicationManager::instance().markDirty(false);
     }
-    return false;
 }
 
 void AppWatchface::render(hal::IDisplay& display, bool fullRefresh) {

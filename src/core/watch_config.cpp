@@ -1,5 +1,6 @@
 #include "watch_config.h"
 #include "debug_log.h"
+#include "ersa/config/system_defaults.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
@@ -9,7 +10,7 @@ namespace WatchConfig {
 namespace {
 Config activeConfig;
 Preferences prefs;
-constexpr const char* PREFS_NS = "watch_cfg";
+constexpr const char* PREFS_NS = ersa::config::PREFS_NS_CONFIG;
 
 void safeCopy(char* dest, const char* src, size_t maxLen) {
     if (!dest || maxLen == 0) return;
@@ -23,19 +24,19 @@ void safeCopy(char* dest, const char* src, size_t maxLen) {
 } // namespace
 
 void resetDefaults() {
-    safeCopy(activeConfig.wifiSsid, "", sizeof(activeConfig.wifiSsid));
-    safeCopy(activeConfig.wifiPass, "", sizeof(activeConfig.wifiPass));
-    safeCopy(activeConfig.caldavServer, "", sizeof(activeConfig.caldavServer));
-    safeCopy(activeConfig.caldavUser, "", sizeof(activeConfig.caldavUser));
-    safeCopy(activeConfig.caldavPass, "", sizeof(activeConfig.caldavPass));
-    safeCopy(activeConfig.caldavCalendar, "murena-team", sizeof(activeConfig.caldavCalendar));
-    safeCopy(activeConfig.caldavTodoPath, "tasks", sizeof(activeConfig.caldavTodoPath));
-    activeConfig.timezoneOffsetMin = 330; // Default +05:30 (IST)
-    activeConfig.militaryTime = false; // Default to 12-hour format (e.g. 12:26 AM)
-    activeConfig.fullRefreshInterval = 20;
-    safeCopy(activeConfig.apSsid, "ErsaWatch-Config", sizeof(activeConfig.apSsid));
-    safeCopy(activeConfig.apPass, "12345678", sizeof(activeConfig.apPass));
-    activeConfig.apTimeoutSec = 180;
+    safeCopy(activeConfig.wifiSsid, ersa::config::DEFAULT_WIFI_SSID, sizeof(activeConfig.wifiSsid));
+    safeCopy(activeConfig.wifiPass, ersa::config::DEFAULT_WIFI_PASS, sizeof(activeConfig.wifiPass));
+    safeCopy(activeConfig.caldavServer, ersa::config::DEFAULT_CALDAV_SERVER, sizeof(activeConfig.caldavServer));
+    safeCopy(activeConfig.caldavUser, ersa::config::DEFAULT_CALDAV_USER, sizeof(activeConfig.caldavUser));
+    safeCopy(activeConfig.caldavPass, ersa::config::DEFAULT_CALDAV_PASS, sizeof(activeConfig.caldavPass));
+    safeCopy(activeConfig.caldavCalendar, ersa::config::DEFAULT_CALDAV_CALENDAR, sizeof(activeConfig.caldavCalendar));
+    safeCopy(activeConfig.caldavTodoPath, ersa::config::DEFAULT_CALDAV_TODO, sizeof(activeConfig.caldavTodoPath));
+    activeConfig.timezoneOffsetMin = ersa::config::DEFAULT_TIMEZONE_OFFSET_MIN;
+    activeConfig.militaryTime = ersa::config::DEFAULT_MILITARY_TIME;
+    activeConfig.fullRefreshInterval = ersa::config::DEFAULT_FULL_REFRESH_CYCLES;
+    safeCopy(activeConfig.apSsid, ersa::config::DEFAULT_AP_SSID, sizeof(activeConfig.apSsid));
+    safeCopy(activeConfig.apPass, ersa::config::DEFAULT_AP_PASS, sizeof(activeConfig.apPass));
+    activeConfig.apTimeoutSec = ersa::config::DEFAULT_AP_TIMEOUT_SEC;
 }
 
 void begin() {
@@ -57,20 +58,20 @@ void begin() {
         s = prefs.getString("dav_pwd", "");
         if (s.length() > 0) safeCopy(activeConfig.caldavPass, s.c_str(), sizeof(activeConfig.caldavPass));
 
-        s = prefs.getString("dav_cal", "personal");
+        s = prefs.getString("dav_cal", ersa::config::FALLBACK_CALDAV_CALENDAR);
         safeCopy(activeConfig.caldavCalendar, s.c_str(), sizeof(activeConfig.caldavCalendar));
 
-        s = prefs.getString("dav_tod", "tasks");
+        s = prefs.getString("dav_tod", ersa::config::DEFAULT_CALDAV_TODO);
         safeCopy(activeConfig.caldavTodoPath, s.c_str(), sizeof(activeConfig.caldavTodoPath));
 
         activeConfig.timezoneOffsetMin = prefs.getShort("tz", activeConfig.timezoneOffsetMin);
         activeConfig.militaryTime = prefs.getBool("24h", activeConfig.militaryTime);
         activeConfig.fullRefreshInterval = prefs.getUChar("fref", activeConfig.fullRefreshInterval);
 
-        s = prefs.getString("ap_ssid", "ErsaWatch-Config");
+        s = prefs.getString("ap_ssid", ersa::config::DEFAULT_AP_SSID);
         safeCopy(activeConfig.apSsid, s.c_str(), sizeof(activeConfig.apSsid));
 
-        s = prefs.getString("ap_pass", "12345678");
+        s = prefs.getString("ap_pass", ersa::config::DEFAULT_AP_PASS);
         safeCopy(activeConfig.apPass, s.c_str(), sizeof(activeConfig.apPass));
 
         activeConfig.apTimeoutSec = prefs.getUShort("ap_to", activeConfig.apTimeoutSec);

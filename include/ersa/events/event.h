@@ -6,101 +6,97 @@
 namespace ersa {
 namespace events {
 
-enum class EventCategory : uint8_t {
+enum class EventType : uint16_t {
     None = 0,
-    Input,
-    Time,
-    Battery,
-    Network,
-    System
+    Boot,
+    Suspend,
+    Resume,
+
+    ButtonPressed,
+    ButtonReleased,
+    ButtonClicked,
+    ButtonDoubleClicked,
+    ButtonLongPressed,
+
+    MinuteTick,
+    SecondTick,
+
+    BatteryChanged,
+    BatteryLow,
+
+    NetworkConnected,
+    NetworkDisconnected,
+
+    NotificationReceived,
+    Custom
 };
 
 enum class ButtonId : uint8_t {
     Unknown = 0,
-    Button1, // Top button (S2 on board)
-    Button2  // Bottom button (S1 on board)
+    Button1, // Top button (S2 on Ampere Works T1E)
+    Button2  // Bottom button (S1 on Ampere Works T1E)
 };
 
-enum class ButtonAction : uint8_t {
-    Press = 0,
-    Release,
-    Click,
-    DoubleClick,
-    LongPress
+struct ButtonPayload {
+    ButtonId button{ButtonId::Unknown};
 };
 
-struct InputData {
-    ButtonId button;
-    ButtonAction action;
+struct TimePayload {
+    uint32_t epoch{0};
+    uint16_t year{2026};
+    uint8_t month{1};
+    uint8_t day{1};
+    uint8_t hour{0};
+    uint8_t minute{0};
+    uint8_t second{0};
 };
 
-struct TimeData {
-    uint32_t epoch;
-    uint16_t year;
-    uint8_t month;
-    uint8_t day;
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t second;
+struct BatteryPayload {
+    uint16_t millivolts{0};
+    uint8_t percentage{100};
+    bool connected{false};
+    bool charging{false};
 };
 
-struct BatteryData {
-    uint16_t millivolts;
-    uint8_t percentage;
-    bool connected;
-    bool charging;
-};
-
-struct NetworkData {
-    bool connected;
-    int16_t statusCode;
-};
-
-struct SystemData {
-    uint8_t state;
+struct NetworkPayload {
+    bool connected{false};
+    int16_t statusCode{0};
 };
 
 struct Event {
-    EventCategory category{EventCategory::None};
-    uint8_t subtype{0};
+    EventType type{EventType::None};
     uint32_t timestampMs{0};
 
     union {
-        InputData input;
-        TimeData time;
-        BatteryData battery;
-        NetworkData network;
-        SystemData system;
+        ButtonPayload button;
+        TimePayload time;
+        BatteryPayload battery;
+        NetworkPayload network;
+        void* customPayload;
     };
 
-    Event() : category(EventCategory::None), subtype(0), timestampMs(0) {
-        input = {ButtonId::Unknown, ButtonAction::Click};
+    Event() : type(EventType::None), timestampMs(0) {
+        button.button = ButtonId::Unknown;
     }
 
-    static Event createInput(ButtonId btn, ButtonAction act, uint32_t ts = 0) {
-        Event e;
-        e.category = EventCategory::Input;
-        e.subtype = static_cast<uint8_t>(act);
-        e.timestampMs = ts;
-        e.input.button = btn;
-        e.input.action = act;
+    explicit Event(EventType t, uint32_t ts = 0) : type(t), timestampMs(ts) {
+        button.button = ButtonId::Unknown;
+    }
+
+    static Event createButton(EventType t, ButtonId btn, uint32_t ts = 0) {
+        Event e(t, ts);
+        e.button.button = btn;
         return e;
     }
 
-    static Event createMinuteTick(const TimeData& td, uint32_t ts = 0) {
-        Event e;
-        e.category = EventCategory::Time;
-        e.subtype = 1; // Minute tick
-        e.timestampMs = ts;
-        e.time = td;
+    static Event createMinuteTick(const TimePayload& tp, uint32_t ts = 0) {
+        Event e(EventType::MinuteTick, ts);
+        e.time = tp;
         return e;
     }
 
-    static Event createBatteryUpdate(uint16_t mv, uint8_t pct, bool conn, bool chg, uint32_t ts = 0) {
-        Event e;
-        e.category = EventCategory::Battery;
-        e.subtype = 1;
-        e.timestampMs = ts;
+    static Event createBatteryChanged(uint16_t mv, uint8_t pct, bool conn, bool chg, uint32_t ts = 0) {
+        Event e(EventType::BatteryChanged, ts);
         e.battery.millivolts = mv;
         e.battery.percentage = pct;
         e.battery.connected = conn;

@@ -4,6 +4,7 @@
 #include "core/battery.h"
 #include "core/net_sync.h"
 #include "fonts/misans_fonts.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 
 namespace AppStatus {
@@ -15,7 +16,7 @@ void render(Adafruit_GFX& display) {
     // Clean lowercase header
     display.setFont(&MiSansLatin_Bold10pt7b);
     display.setCursor(18, 24);
-    display.print("status");
+    display.print(ersa::strings::APP_TITLE_STATUS);
 
     display.setFont(&MiSansLatin_Regular8pt7b);
 
@@ -28,7 +29,7 @@ void render(Adafruit_GFX& display) {
     display.setCursor(leftX, startY);
     display.print("rtc");
     display.setCursor(valX, startY);
-    display.print(WatchClock::healthy() ? "online" : "offline");
+    display.print(WatchClock::healthy() ? ersa::strings::MSG_ONLINE : ersa::strings::MSG_OFFLINE);
 
     // 2. Battery
     display.setCursor(leftX, startY + rowHeight);
@@ -40,7 +41,7 @@ void render(Adafruit_GFX& display) {
                  Battery::percentage(), Battery::millivolts());
         display.print(battBuf);
     } else {
-        display.print("USB power");
+        display.print(ersa::strings::MSG_USB_POWER);
     }
 
     // 3. Reset
@@ -71,7 +72,7 @@ void render(Adafruit_GFX& display) {
 
     // Clean footer
     display.setCursor(leftX, 186);
-    display.print("sync B2   menu B1");
+    display.print(ersa::strings::NAV_STATUS_FOOTER);
 }
 
 bool onButton(Buttons::Event event) {

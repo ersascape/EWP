@@ -3,6 +3,7 @@
 #include "core/battery.h"
 #include "core/net_sync.h"
 #include "fonts/misans_fonts.h"
+#include "ersa/config/ui_strings.h"
 #include <Arduino.h>
 
 namespace WatchfaceClock {
@@ -134,11 +135,11 @@ void render(Adafruit_GFX& display, const DateTime& time) {
     if (NetSync::isSyncing()) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(leftX, 184);
-        display.print("syncing...");
+        display.print(ersa::strings::MSG_SYNCING);
     } else if (Battery::isConnected() && Battery::percentage() <= 20) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(leftX, 184);
-        display.print("low batt");
+        display.print(ersa::strings::MSG_LOW_BATT);
     }
 }
 
