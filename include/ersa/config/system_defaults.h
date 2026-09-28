@@ -30,10 +30,10 @@ inline constexpr const char* DEFAULT_HTTP_TIME_ENDPOINTS[] = {
 inline constexpr size_t NUM_HTTP_TIME_ENDPOINTS = sizeof(DEFAULT_HTTP_TIME_ENDPOINTS) / sizeof(DEFAULT_HTTP_TIME_ENDPOINTS[0]);
 
 // Network timeouts (milliseconds)
-inline constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 9000;
-inline constexpr uint32_t NTP_SYNC_TIMEOUT_MS     = 5000;
-inline constexpr uint32_t HTTP_TIME_TIMEOUT_MS    = 4000;
-inline constexpr uint32_t CALDAV_HTTP_TIMEOUT_MS  = 8000;
+inline constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
+inline constexpr uint32_t NTP_SYNC_TIMEOUT_MS     = 8000;
+inline constexpr uint32_t HTTP_TIME_TIMEOUT_MS    = 6000;
+inline constexpr uint32_t CALDAV_HTTP_TIMEOUT_MS  = 35000;
 inline constexpr uint8_t  MAX_WIFI_RETRIES        = 2;
 
 // Fallback Wi-Fi Credentials
@@ -53,6 +53,7 @@ inline constexpr const char* DEFAULT_CALDAV_PASS      = "";
 inline constexpr const char* DEFAULT_CALDAV_CALENDAR  = "murena-team";
 inline constexpr const char* FALLBACK_CALDAV_CALENDAR = "personal";
 inline constexpr const char* DEFAULT_CALDAV_TODO      = "tasks";
+inline constexpr const char* FALLBACK_CALDAV_TODO      = "personal";
 
 // Timezone and Display Localization Defaults
 inline constexpr int16_t DEFAULT_TIMEZONE_OFFSET_MIN = 330; // +05:30 (IST)

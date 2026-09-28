@@ -115,6 +115,7 @@ bool connectWiFi(const WatchConfig::Config& cfg) {
     safeCopy(statusMsg, ersa::strings::MSG_WIFI_CONNECTING, sizeof(statusMsg));
     DebugLog::log("NET: Connecting to '%s'", cfg.wifiSsid);
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false); // Keep radio awake for stable TLS negotiation and large transfers
     WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
 
     const uint32_t startMs = millis();
@@ -165,7 +166,9 @@ String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, 
         if (encodeAt) u.replace("@", "%40");
         s += u;
         s += "/";
-        s += (calendarName && calendarName[0] != '\0') ? calendarName : "personal";
+        String c = (calendarName && calendarName[0] != '\0') ? String(calendarName) : String("personal");
+        if (encodeAt) c.replace("@", "%40");
+        s += c;
         s += "?export";
     }
 
@@ -212,6 +215,7 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     if (url.isEmpty()) return false;
     DebugLog::log("NET: Fetching ICS from: %s", url.c_str());
 
+    client.setTimeout(ersa::config::CALDAV_HTTP_TIMEOUT_MS / 1000);
     if (!https.begin(client, url)) {
         DebugLog::log("NET: HTTPClient begin failed");
         return false;
@@ -221,7 +225,7 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     if (cfg.caldavUser[0] != '\0' && cfg.caldavPass[0] != '\0') {
         https.setAuthorization(cfg.caldavUser, cfg.caldavPass);
     }
-    https.setTimeout(8000);
+    https.setTimeout(ersa::config::CALDAV_HTTP_TIMEOUT_MS);
 
     const int code = https.GET();
     DebugLog::log("NET: ICS GET code=%d", code);
@@ -633,19 +637,33 @@ bool syncAll() {
         }
 
         // Step B: Fetch tasks calendar if different from events calendar
+        bool okTasks = false;
         if (cfg.caldavTodoPath[0] != '\0' && strcmp(cfg.caldavCalendar, cfg.caldavTodoPath) != 0) {
             String tasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, false);
             size_t extraEvents = 0;
             size_t extraTodos = parsedTodos;
-            bool ok2 = fetchAndParseIcs(client, https, tasksUrl, cfg, extraEvents, extraTodos);
-            if (!ok2 && tasksUrl.indexOf("@") != -1) {
+            okTasks = fetchAndParseIcs(client, https, tasksUrl, cfg, extraEvents, extraTodos);
+            if (!okTasks && tasksUrl.indexOf("@") != -1) {
                 String retryTasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, true);
-                fetchAndParseIcs(client, https, retryTasksUrl, cfg, extraEvents, extraTodos);
+                okTasks = fetchAndParseIcs(client, https, retryTasksUrl, cfg, extraEvents, extraTodos);
             }
-            parsedTodos = extraTodos;
+            // If configured tasks path returned 404 or failed, fallback to standard Nextcloud "personal" calendar
+            if (!okTasks && strcmp(cfg.caldavTodoPath, ersa::config::FALLBACK_CALDAV_TODO) != 0) {
+                DebugLog::log("NET: Tasks at '%s' failed/404; trying fallback '%s'",
+                              cfg.caldavTodoPath, ersa::config::FALLBACK_CALDAV_TODO);
+                String fallbackTasksUrl = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, false);
+                okTasks = fetchAndParseIcs(client, https, fallbackTasksUrl, cfg, extraEvents, extraTodos);
+                if (!okTasks && fallbackTasksUrl.indexOf("@") != -1) {
+                    String retryFallback = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, true);
+                    okTasks = fetchAndParseIcs(client, https, retryFallback, cfg, extraEvents, extraTodos);
+                }
+            }
+            if (okTasks) {
+                parsedTodos = extraTodos;
+            }
         }
 
-        if (ok) {
+        if (ok || okTasks || parsedEvents > 0 || parsedTodos > 0) {
             numEvents = parsedEvents;
             numTodos = parsedTodos;
             saveCache();

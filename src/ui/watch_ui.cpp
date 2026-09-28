@@ -177,51 +177,5 @@ void WatchUi::tick() {
         nowMs = millis(); // Refresh timestamp immediately after rendering finishes
     }
 
-#if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
-    // Keep CPU awake while USB serial terminal is connected for live monitoring/debugging
-    if (Serial) {
-        return;
-    }
-#endif
-
-    // Only sleep on the watchface when idle
-    // Interactive apps (calendar, agenda, todo, drawer, etc.) stay awake for instant button response
-    const bool onWatchface = (appManager.getActiveApp() != nullptr &&
-                              strcmp(appManager.getActiveApp()->getId(), "watchface_clock") == 0);
-    if (!onWatchface) {
-        return;
-    }
-
-    const uint32_t postIdleMs = (nowMs >= lastActivityMs) ? (nowMs - lastActivityMs) : 0;
-    const uint32_t postRenderAge = (nowMs >= lastFrameEnd) ? (nowMs - lastFrameEnd) : 0;
-
-    // Low-power Light Sleep on Watchface:
-    // Conditions:
-    // 1. Not dirty and display hardware controller not busy
-    // 2. Physical settling guard: at least 2000 ms elapsed since last frame end
-    //    (allows E-ink microcapsules and charge pumps to settle without electrical interruption)
-    // 3. At least 8000 ms elapsed since last button activity
-    // 4. No network sync active, no hotspot portal active, no active wake locks
-    // 5. No buttons currently pressed or pending in queue
-    const bool canSleep = !appManager.isDirty() &&
-                          !board.getEsp32Display().isBusy() &&
-                          (postRenderAge >= 2000) &&
-                          (postIdleMs >= 8000) &&
-                          !NetSync::isSyncing() &&
-                          !AppPortal::isActive() &&
-                          powerManager.canSleep() &&
-                          !Buttons::isPressed() &&
-                          !Buttons::hasPendingEvents();
-
-    if (canSleep) {
-        const DateTime now = WatchClock::now();
-        const uint32_t sec = now.second();
-        const uint32_t secRemaining = (sec < 60) ? (60 - sec) : 60;
-        const uint64_t sleepUs = (uint64_t)secRemaining * 1000000ULL;
-
-        powerManager.enterLightSleep(sleepUs);
-
-        // Resume after wakeup
-        lastActivityMs = millis();
-    }
+    delay(10); // Yield to FreeRTOS idle task: rock-solid stability, no sleep crashes
 }
