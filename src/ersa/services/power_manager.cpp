@@ -1,6 +1,14 @@
 #include "ersa/services/power_manager.h"
 #include <string.h>
 
+#if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
+#include <Arduino.h>
+#include <esp_sleep.h>
+#include <driver/gpio.h>
+#include "board_pins.h"
+#include "core/debug_log.h"
+#endif
+
 namespace ersa {
 namespace services {
 
@@ -163,6 +171,68 @@ PowerState PowerManager::getState() const {
 
 void PowerManager::requestState(PowerState state) {
     state_ = state;
+}
+
+bool PowerManager::canSleep() const {
+    if (hasWakeLocks()) return false;
+    return true;
+}
+
+void PowerManager::enterLightSleep(uint64_t sleepTimeUs) {
+#if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
+    state_ = PowerState::LightSleep;
+
+    // Enable low level wakeup on buttons (Pins::BUTTON_1 = GPIO4, Pins::BUTTON_2 = GPIO3)
+    gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::BUTTON_1), GPIO_INTR_LOW_LEVEL);
+    gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::BUTTON_2), GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+
+    if (sleepTimeUs > 0) {
+        esp_sleep_enable_timer_wakeup(sleepTimeUs);
+    }
+
+    DebugLog::log("PWR: entering light sleep (max %llu s)", (unsigned long long)(sleepTimeUs / 1000000ULL));
+    DebugLog::flush();
+
+    esp_light_sleep_start();
+
+    // CPU execution resumes directly after wakeup
+    state_ = PowerState::Active;
+    const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+        DebugLog::log("PWR: woke from light sleep by GPIO");
+        noteActivity(millis());
+    } else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+        DebugLog::log("PWR: woke from light sleep by TIMER");
+    } else {
+        DebugLog::log("PWR: woke from light sleep cause=%d", int(cause));
+    }
+#else
+    state_ = PowerState::LightSleep;
+    (void)sleepTimeUs;
+#endif
+}
+
+void PowerManager::enterDeepSleep(uint64_t sleepTimeUs) {
+#if defined(ARDUINO) && defined(CONFIG_IDF_TARGET_ESP32C3)
+    state_ = PowerState::DeepSleep;
+
+    DebugLog::log("PWR: entering deep sleep...");
+    DebugLog::flush();
+
+    // Enable deep sleep wakeup on button GPIOs (GPIO3 and GPIO4 supported on ESP32-C3)
+    const uint64_t pinMask = (1ULL << Pins::BUTTON_1) | (1ULL << Pins::BUTTON_2);
+    esp_deep_sleep_enable_gpio_wakeup(pinMask, ESP_GPIO_WAKEUP_GPIO_LOW);
+
+    if (sleepTimeUs > 0) {
+        esp_sleep_enable_timer_wakeup(sleepTimeUs);
+    }
+
+    esp_deep_sleep_start();
+#else
+    state_ = PowerState::DeepSleep;
+    (void)sleepTimeUs;
+#endif
 }
 
 } // namespace services

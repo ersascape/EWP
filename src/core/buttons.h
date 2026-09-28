@@ -15,5 +15,7 @@ enum class Event : uint8_t {
 void begin();
 void tick();
 Event takeEvent();
+bool isPressed();
+bool hasPendingEvents();
 const char* name(Event event);
 }

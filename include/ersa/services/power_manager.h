@@ -65,6 +65,10 @@ public:
     PowerState getState() const;
     void requestState(PowerState state);
 
+    bool canSleep() const;
+    void enterLightSleep(uint64_t sleepTimeUs);
+    void enterDeepSleep(uint64_t sleepTimeUs = 0);
+
     static PowerManager& instance();
     static void setInstance(PowerManager* instance);
 

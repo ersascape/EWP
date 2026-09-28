@@ -6,8 +6,10 @@
 #include "ersa/services/power_manager.h"
 #include "ersa/services/display_manager.h"
 #include "apps/apps_registry.h"
+#include "apps/app_portal.h"
 #include "core/watch_clock.h"
 #include "core/debug_log.h"
+#include "core/buttons.h"
 #include "core/net_sync.h"
 #include <Arduino.h>
 
@@ -22,11 +24,12 @@ ersa::services::PowerManager powerManager(board.getBattery(), eventBus);
 ersa::services::DisplayManager displayManager(board.getDisplay());
 
 uint32_t shownMinute = UINT32_MAX;
+uint8_t shownDay = 0;
 bool shownRtcHealthy = false;
 uint32_t lastFrameEnd = 0;
 uint32_t lastActivityMs = 0;
 bool panelPowered = false;
-uint8_t partialFrames = 0;
+uint16_t partialFrames = 0;
 bool firstFrame = true;
 
 ersa::events::Event toErsaInputEvent(Buttons::Event legacy) {
@@ -58,10 +61,10 @@ void renderCurrentApp() {
     auto& espDisp = board.getEsp32Display();
     auto& gx = espDisp.getGxDisplay();
 
-    // 1. Hardware full refresh (waveform clear): firstFrame or periodic (every 30 partial updates)
-    // 2. Full-canvas redraw (fast partial refresh): app switched or app requested full refresh
-    // 3. Sub-window partial refresh: dynamic sub-region inside current app
-    const bool hardwareFull = firstFrame || (partialFrames >= 30);
+    // 1. Hardware full refresh (waveform clear): ONLY on firstFrame after boot, or once every 360 partial updates (~6 hours), or day change at midnight.
+    // NEVER on button press, scroll, or normal minute ticks!
+    const bool dayChanged = (shownDay != 0 && time.day() != shownDay);
+    const bool hardwareFull = firstFrame || (partialFrames >= 360) || dayChanged;
     const bool fullCanvas = hardwareFull || appManager.isFullRefreshNeeded() || appManager.isAppSwitched();
 
     DebugLog::log("EPD begin app=%s hwFull=%d fullCanvas=%d time=%02u:%02u:%02u",
@@ -106,6 +109,7 @@ void renderCurrentApp() {
     panelPowered = true;
     lastActivityMs = millis();
     shownMinute = time.unixtime() / 60;
+    shownDay = time.day();
     shownRtcHealthy = WatchClock::healthy();
     lastFrameEnd = millis();
 
@@ -128,12 +132,21 @@ void WatchUi::begin() {
     displayManager.init();
     ersa::services::DisplayManager::setInstance(&displayManager);
 
+    // Subscribe ApplicationManager to EventBus for decoupled event routing
+    eventBus.subscribe(ersa::events::EventType::None, [](const ersa::events::Event& evt, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr) {
+            mgr->handleEvent(evt);
+        }
+    }, &appManager);
+
     ersa::app::registerAllApps(appManager);
     appManager.switchTo("watchface_clock");
 
     NetSync::begin();
 
     renderCurrentApp();
+    lastActivityMs = millis();
     DebugLog::log("UI: boot complete, active app: %s",
                   appManager.getActiveApp() ? appManager.getActiveApp()->getTitle() : "none");
 }
@@ -162,6 +175,15 @@ void WatchUi::tick() {
     timeService.tick(nowMs);
     powerManager.tick(nowMs);
 
+    // Auto-return to watchface after 60 seconds of inactivity on other screens
+    if (appManager.getActiveApp() != nullptr &&
+        strcmp(appManager.getActiveApp()->getId(), "watchface_clock") != 0 &&
+        (nowMs - lastActivityMs >= 60000)) {
+        DebugLog::log("UI: auto-returning to watchface after 60s idle");
+        appManager.switchTo("watchface_clock");
+        lastActivityMs = nowMs;
+    }
+
     const uint32_t currentMinute = WatchClock::now().unixtime() / 60;
     if (currentMinute != shownMinute || WatchClock::healthy() != shownRtcHealthy) {
         appManager.markDirty(false);
@@ -173,9 +195,48 @@ void WatchUi::tick() {
         appManager.clearDirty();
     }
 
-    if (panelPowered && (nowMs - lastActivityMs >= 8000)) {
+    // Power off EPD panel after 3 seconds of idle (drops panel draw to 0)
+    if (panelPowered && (nowMs - lastActivityMs >= 3000)) {
         board.getEsp32Display().powerOff();
         panelPowered = false;
         DebugLog::log("EPD: powered off (idle timeout)");
+    }
+
+    // Low-power Light Sleep:
+    // Conditions:
+    // 1. Not dirty and display not busy
+    // 2. No network sync active, no hotspot portal active, no active wake locks
+    // 3. No buttons currently pressed or pending in queue
+    // 4. Idle timeout elapsed:
+    //    - On watchface: 4 seconds after last activity
+    //    - On other apps: 12 seconds after last activity
+    const bool onWatchface = (appManager.getActiveApp() != nullptr &&
+                              strcmp(appManager.getActiveApp()->getId(), "watchface_clock") == 0);
+    const uint32_t sleepIdleTimeout = onWatchface ? 4000 : 12000;
+
+    const bool canSleep = !appManager.isDirty() &&
+                          !board.getEsp32Display().isBusy() &&
+                          !NetSync::isSyncing() &&
+                          !AppPortal::isActive() &&
+                          powerManager.canSleep() &&
+                          !Buttons::isPressed() &&
+                          !Buttons::hasPendingEvents() &&
+                          ((nowMs - lastActivityMs) >= sleepIdleTimeout);
+
+    if (canSleep) {
+        if (panelPowered) {
+            board.getEsp32Display().powerOff();
+            panelPowered = false;
+        }
+
+        const DateTime now = WatchClock::now();
+        const uint32_t sec = now.second();
+        const uint32_t secRemaining = (sec < 60) ? (60 - sec) : 60;
+        const uint64_t sleepUs = (uint64_t)secRemaining * 1000000ULL;
+
+        powerManager.enterLightSleep(sleepUs);
+
+        // Resume after wakeup
+        lastActivityMs = millis();
     }
 }

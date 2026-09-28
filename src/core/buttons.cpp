@@ -95,3 +95,11 @@ Buttons::Event Buttons::takeEvent() {
     tail = (tail + 1) % 16;
     return event;
 }
+
+bool Buttons::isPressed() {
+    return (digitalRead(Pins::BUTTON_1) == LOW) || (digitalRead(Pins::BUTTON_2) == LOW);
+}
+
+bool Buttons::hasPendingEvents() {
+    return head != tail;
+}

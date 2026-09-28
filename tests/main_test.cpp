@@ -264,6 +264,20 @@ void test_power_manager() {
     TEST_ASSERT(power.getIdleTimeMs(5000) == 0, "Zero idle right after activity");
     TEST_ASSERT(power.getIdleTimeMs(12000) == 7000, "Idle time computed correctly");
 
+    // Sleep tests
+    TEST_ASSERT(power.canSleep(), "Can sleep without wake locks");
+    {
+        services::WakeLock lock = power.acquireWakeLock("wifi");
+        TEST_ASSERT(!power.canSleep(), "Cannot sleep while wake lock held");
+    }
+    TEST_ASSERT(power.canSleep(), "Can sleep after wake lock released");
+
+    power.enterLightSleep(1000000);
+    TEST_ASSERT(power.getState() == services::PowerState::LightSleep, "State changed to LightSleep");
+
+    power.enterDeepSleep(0);
+    TEST_ASSERT(power.getState() == services::PowerState::DeepSleep, "State changed to DeepSleep");
+
     TEST_PASS();
 }
 

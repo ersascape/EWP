@@ -86,7 +86,7 @@ void DebugLog::tick() {
     static uint32_t lastReport = 0;
     const bool connected = bool(Serial);
     if (connected && !attached) {
-        log("WatchBase boot=%lu reset=%s(%d) saved=%d; display shows HH:MM only",
+        log("ErsaWearable boot=%lu reset=%s(%d) saved=%d; display shows HH:MM only",
             (unsigned long)history.count, resetReasonName(), int(esp_reset_reason()), historySaved);
         log("RESET history newest->oldest: %s, %s, %s, %s",
             reasonName(history.causes[0]), reasonName(history.causes[1]),
@@ -104,6 +104,12 @@ void DebugLog::tick() {
         WatchClock::healthy() ? "online" : "offline",
         digitalRead(Pins::BUTTON_1), digitalRead(Pins::BUTTON_2),
         digitalRead(Pins::EPD_BUSY), unsigned(ESP.getFreeHeap()));
+}
+
+void DebugLog::flush() {
+    if (Serial) {
+        Serial.flush();
+    }
 }
 
 uint32_t DebugLog::bootCount() { return history.count; }
