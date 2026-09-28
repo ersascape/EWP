@@ -128,11 +128,21 @@ void render(Adafruit_GFX& display, const DateTime& time, bool full) {
         if (title && title[0] != '\0' && strcmp(title, "No Media") != 0) {
             char mediaBuf[32];
             snprintf(mediaBuf, sizeof(mediaBuf), "%s", title);
-            if (strlen(mediaBuf) > 20) {
-                mediaBuf[16] = '.'; mediaBuf[17] = '.'; mediaBuf[18] = '.'; mediaBuf[19] = '\0';
+            // Reserve a generous left inset and leave the note clear on the right.
+            display.setFont(&MiSansLatin_Regular8pt7b);
+            int16_t boundsX, boundsY;
+            uint16_t textWidth, textHeight;
+            display.getTextBounds(mediaBuf, 0, 0, &boundsX, &boundsY, &textWidth, &textHeight);
+            while (textWidth > 114 && strlen(mediaBuf) > 4) {
+                const size_t length = strlen(mediaBuf);
+                mediaBuf[length - 4] = '.';
+                mediaBuf[length - 3] = '.';
+                mediaBuf[length - 2] = '.';
+                mediaBuf[length - 1] = '\0';
+                display.getTextBounds(mediaBuf, 0, 0, &boundsX, &boundsY, &textWidth, &textHeight);
             }
-            drawRightAlignedText(display, mediaBuf, 156, 150, &MiSansLatin_Regular8pt7b);
-            drawMusicNote(display, 166, 136);
+            drawRightAlignedText(display, mediaBuf, 164, 150, &MiSansLatin_Regular8pt7b);
+            drawMusicNote(display, 174, 136);
         }
     }
 
