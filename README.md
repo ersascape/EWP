@@ -214,12 +214,12 @@ make firmware
 ```
 The `Firmware` GitHub Actions workflow also builds on pull requests and pushes to
 `master`, then stores the application image and factory image as a 30-day workflow
-artifact. To publish downloadable firmware under **GitHub Releases**, push a version
-tag such as:
+artifact. To publish downloadable firmware under **GitHub Releases**, push an
+`ewp-*` version tag such as the initial release tag:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag ewp-0.1
+git push origin ewp-0.1
 ```
 
 Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for

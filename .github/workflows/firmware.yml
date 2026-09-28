@@ -3,7 +3,7 @@ name: Firmware
 on:
   push:
     branches: [master]
-    tags: ["v*"]
+    tags: ["ewp-*"]
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -65,7 +65,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/ewp-')
     needs: build
     runs-on: ubuntu-latest
     permissions:
