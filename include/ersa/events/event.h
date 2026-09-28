@@ -27,6 +27,17 @@ enum class EventType : uint16_t {
     NetworkConnected,
     NetworkDisconnected,
 
+    BleConnected,
+    BleDisconnected,
+
+    CallIncoming,
+    CallAccepted,
+    CallRejected,
+    CallEnded,
+
+    MediaTrackChanged,
+    MediaStateChanged,
+
     NotificationReceived,
     Custom
 };
@@ -60,7 +71,18 @@ struct BatteryPayload {
 
 struct NetworkPayload {
     bool connected{false};
-    int16_t statusCode{0};
+};
+
+struct CallPayload {
+    char caller[32];
+    char number[20];
+    uint8_t state; // 0: Incoming, 1: Active, 2: Ended
+};
+
+struct MediaPayload {
+    char title[32];
+    char artist[32];
+    bool playing;
 };
 
 struct Event {
@@ -72,6 +94,8 @@ struct Event {
         TimePayload time;
         BatteryPayload battery;
         NetworkPayload network;
+        CallPayload call;
+        MediaPayload media;
         void* customPayload;
     };
 
@@ -101,6 +125,46 @@ struct Event {
         e.battery.percentage = pct;
         e.battery.connected = conn;
         e.battery.charging = chg;
+        return e;
+    }
+
+    static Event createCall(EventType t, const char* caller, const char* number, uint8_t state, uint32_t ts = 0) {
+        Event e(t, ts);
+        e.call.state = state;
+        e.call.caller[0] = '\0';
+        e.call.number[0] = '\0';
+        if (caller) {
+            for (size_t i = 0; i < sizeof(e.call.caller) - 1 && caller[i]; ++i) {
+                e.call.caller[i] = caller[i];
+                e.call.caller[i + 1] = '\0';
+            }
+        }
+        if (number) {
+            for (size_t i = 0; i < sizeof(e.call.number) - 1 && number[i]; ++i) {
+                e.call.number[i] = number[i];
+                e.call.number[i + 1] = '\0';
+            }
+        }
+        return e;
+    }
+
+    static Event createMedia(const char* title, const char* artist, bool playing, uint32_t ts = 0) {
+        Event e(EventType::MediaTrackChanged, ts);
+        e.media.playing = playing;
+        e.media.title[0] = '\0';
+        e.media.artist[0] = '\0';
+        if (title) {
+            for (size_t i = 0; i < sizeof(e.media.title) - 1 && title[i]; ++i) {
+                e.media.title[i] = title[i];
+                e.media.title[i + 1] = '\0';
+            }
+        }
+        if (artist) {
+            for (size_t i = 0; i < sizeof(e.media.artist) - 1 && artist[i]; ++i) {
+                e.media.artist[i] = artist[i];
+                e.media.artist[i + 1] = '\0';
+            }
+        }
         return e;
     }
 };

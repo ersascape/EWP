@@ -14,10 +14,12 @@
 #include "ersa/services/storage_service.h"
 #include "ersa/services/settings_service.h"
 #include "ersa/services/logging_service.h"
+#include "ersa/services/bluetooth_manager.h"
 #include "ersa/system.h"
 #include "mocks/mock_display.h"
 #include "mocks/mock_rtc.h"
 #include "mocks/mock_battery.h"
+#include "mocks/mock_bluetooth.h"
 
 using namespace ersa;
 
@@ -497,6 +499,120 @@ void test_config_and_fallbacks() {
 }
 
 // -----------------------------------------------------------------------------
+// Test BluetoothManager & Telephony / Media
+// -----------------------------------------------------------------------------
+void test_bluetooth_manager() {
+    events::EventBus bus;
+    test::MockBluetooth mockBle;
+    services::BluetoothManager bleMgr(mockBle, bus);
+    bleMgr.init();
+
+    // 1. Check initial state
+    TEST_ASSERT(!bleMgr.isConnected(), "Should start disconnected");
+    TEST_ASSERT(mockBle.isAdvertising(), "Should start advertising on init");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Initial call state should be Idle");
+    TEST_ASSERT(bleMgr.getRecentCallCount() >= 2, "Should have default seeded recents");
+
+    // 2. Track events from EventBus
+    bool gotBleConnected = false;
+    bool gotBleDisconnected = false;
+    bool gotCallIncoming = false;
+    bool gotCallAccepted = false;
+    bool gotCallEnded = false;
+    char lastMediaTrackReceived[32] = "";
+
+    bus.subscribe(events::EventType::BleConnected, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotBleConnected);
+
+    bus.subscribe(events::EventType::BleDisconnected, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotBleDisconnected);
+
+    bus.subscribe(events::EventType::CallIncoming, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotCallIncoming);
+
+    bus.subscribe(events::EventType::CallAccepted, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotCallAccepted);
+
+    bus.subscribe(events::EventType::CallEnded, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotCallEnded);
+
+    bus.subscribe(events::EventType::MediaTrackChanged, [](const events::Event& e, void* u) {
+        auto* buf = static_cast<char*>(u);
+        strncpy(buf, e.media.title, 31);
+    }, lastMediaTrackReceived);
+
+    // 3. Test Connection
+    mockBle.simulateConnection(true);
+    TEST_ASSERT(bleMgr.isConnected(), "BluetoothManager should report connected");
+    TEST_ASSERT(gotBleConnected, "EventBus should receive BleConnected");
+
+    // 4. Test Incoming Call
+    mockBle.simulateIncomingCall("Alice", "+15551234");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Incoming, "Call state should be Incoming");
+    TEST_ASSERT(strcmp(bleMgr.getCallerName(), "Alice") == 0, "Caller name should be Alice");
+    TEST_ASSERT(strcmp(bleMgr.getCallerNumber(), "+15551234") == 0, "Caller number should match");
+    TEST_ASSERT(gotCallIncoming, "EventBus should receive CallIncoming");
+
+    // Recents check - top recent should now be Alice
+    TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Alice") == 0, "Top recent should be Alice");
+
+    // 5. Test Accept Call (B1 pressed)
+    bleMgr.acceptCall();
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Call state should be Active after accept");
+    TEST_ASSERT(mockBle.acceptCount() == 1, "HAL acceptCall should be called once");
+    TEST_ASSERT(gotCallAccepted, "EventBus should receive CallAccepted");
+
+    // 6. Test Hang Up Call (B2 pressed)
+    bleMgr.hangupCall();
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Ended, "Call state should be Ended after hangup");
+    TEST_ASSERT(mockBle.hangupCount() == 1, "HAL hangupCall should be called once");
+    TEST_ASSERT(gotCallEnded, "EventBus should receive CallEnded");
+
+    // 7. Test Quick Dial Recent (Hold B1)
+    bleMgr.dialRecent(0); // Dial Alice
+    TEST_ASSERT(mockBle.dialCount() == 1, "HAL dial should be called once");
+    TEST_ASSERT(strcmp(mockBle.lastDialed(), "+15551234") == 0, "Dialed number should match Alice's number");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Call state should be Active after dial");
+
+    bleMgr.hangupCall();
+
+    // 8. Test Media Control & Updates
+    mockBle.simulateMedia(true, "Starboy", "The Weeknd");
+    TEST_ASSERT(bleMgr.isPlaying(), "Media state should be playing");
+    TEST_ASSERT(strcmp(bleMgr.getMediaTitle(), "Starboy") == 0, "Title should be Starboy");
+    TEST_ASSERT(strcmp(bleMgr.getMediaArtist(), "The Weeknd") == 0, "Artist should be The Weeknd");
+    TEST_ASSERT(strcmp(lastMediaTrackReceived, "Starboy") == 0, "EventBus should receive MediaTrackChanged");
+
+    // Test B1 next track
+    bleMgr.mediaNext();
+    TEST_ASSERT(mockBle.mediaCmdCount() == 1, "mediaCommand should be called once");
+    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Next, "Action should be Next");
+
+    // Test B2 play/pause toggle
+    bleMgr.mediaToggle();
+    TEST_ASSERT(mockBle.mediaCmdCount() == 2, "mediaCommand should be called twice");
+    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Toggle, "Action should be Toggle");
+    TEST_ASSERT(!bleMgr.isPlaying(), "Playback state should now be paused");
+
+    // Test previous track
+    bleMgr.mediaPrevious();
+    TEST_ASSERT(mockBle.mediaCmdCount() == 3, "mediaCommand should be called 3 times");
+    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Previous, "Action should be Previous");
+
+    // 9. Disconnect
+    mockBle.simulateConnection(false);
+    TEST_ASSERT(!bleMgr.isConnected(), "Should report disconnected");
+    TEST_ASSERT(gotBleDisconnected, "EventBus should receive BleDisconnected");
+
+    TEST_PASS();
+}
+
+// -----------------------------------------------------------------------------
 // Main Test Runner
 // -----------------------------------------------------------------------------
 int main() {
@@ -514,6 +630,7 @@ int main() {
     test_settings_service();
     test_complications();
     test_config_and_fallbacks();
+    test_bluetooth_manager();
 
     printf("\nAll %d test suites passed successfully!\n", testsPassed);
     return 0;

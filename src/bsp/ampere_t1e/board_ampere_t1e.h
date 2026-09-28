@@ -8,6 +8,7 @@
 #include "hal/esp32/esp32_rtc.h"
 #include "hal/esp32/esp32_battery.h"
 #include "hal/esp32/esp32_input.h"
+#include "hal/esp32/esp32_bluetooth.h"
 
 namespace ersa {
 namespace board {
@@ -25,9 +26,11 @@ public:
     hal::IRtc& getRtc() override { return rtc_; }
     hal::IBattery& getBattery() override { return battery_; }
     hal::IInput& getInput() override { return input_; }
+    hal::IBluetooth& getBluetooth() { return bluetooth_; }
 
     hal::Esp32Display& getEsp32Display() { return display_; }
     hal::Esp32Rtc& getEsp32Rtc() { return rtc_; }
+    hal::Esp32Bluetooth& getEsp32Bluetooth() { return bluetooth_; }
 
     uint32_t getUptimeMs() const override;
     void delayMs(uint32_t ms) override;
@@ -40,6 +43,7 @@ private:
     hal::Esp32Rtc rtc_;
     hal::Esp32Battery battery_;
     hal::Esp32Input input_;
+    hal::Esp32Bluetooth bluetooth_;
 };
 
 } // namespace board

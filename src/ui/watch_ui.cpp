@@ -5,6 +5,7 @@
 #include "ersa/services/time_service.h"
 #include "ersa/services/power_manager.h"
 #include "ersa/services/display_manager.h"
+#include "ersa/services/bluetooth_manager.h"
 #include "apps/apps_registry.h"
 #include "apps/app_portal.h"
 #include "core/watch_clock.h"
@@ -22,6 +23,7 @@ ersa::app::ApplicationManager& appManager = ersa::app::ApplicationManager::insta
 ersa::services::TimeService timeService(board.getRtc(), eventBus);
 ersa::services::PowerManager powerManager(board.getBattery(), eventBus);
 ersa::services::DisplayManager displayManager(board.getDisplay());
+ersa::services::BluetoothManager bluetoothManager(board.getBluetooth(), eventBus);
 
 uint32_t shownMinute = UINT32_MAX;
 uint8_t shownDay = 0;
@@ -110,11 +112,38 @@ void WatchUi::begin() {
     displayManager.init();
     ersa::services::DisplayManager::setInstance(&displayManager);
 
+    bluetoothManager.init();
+    ersa::services::BluetoothManager::setInstance(&bluetoothManager);
+
     // Subscribe ApplicationManager to EventBus for decoupled event routing
     eventBus.subscribe(ersa::events::EventType::None, [](const ersa::events::Event& evt, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
         if (mgr) {
             mgr->handleEvent(evt);
+        }
+    }, &appManager);
+
+    // Auto-switch to call screen on incoming call
+    eventBus.subscribe(ersa::events::EventType::CallIncoming, [](const ersa::events::Event&, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr) {
+            mgr->switchTo("app_call");
+            mgr->markDirty(false);
+        }
+    }, &appManager);
+
+    // Re-render when track or playback state changes if NowPlaying is active
+    eventBus.subscribe(ersa::events::EventType::MediaTrackChanged, [](const ersa::events::Event&, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_media") == 0) {
+            mgr->markDirty(false);
+        }
+    }, &appManager);
+
+    eventBus.subscribe(ersa::events::EventType::MediaStateChanged, [](const ersa::events::Event&, void* user) {
+        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_media") == 0) {
+            mgr->markDirty(false);
         }
     }, &appManager);
 
@@ -136,6 +165,21 @@ void WatchUi::onButton(Buttons::Event legacyEvent) {
     displayManager.noteActivity(lastActivityMs);
     powerManager.noteActivity(lastActivityMs);
 
+    // Quick dial on watchface: holding B1 dials top recent contact
+    if (appManager.getActiveApp() != nullptr &&
+        strcmp(appManager.getActiveApp()->getId(), "watchface_clock") == 0 &&
+        legacyEvent == Buttons::Event::Home) {
+        if (bluetoothManager.getRecentCallCount() > 0) {
+            DebugLog::log("UI: Hold B1 on watchface -> Quick dial recent %s (%s)",
+                          bluetoothManager.getRecentCall(0).name,
+                          bluetoothManager.getRecentCall(0).number);
+            bluetoothManager.dialRecent(0);
+            appManager.switchTo("app_call");
+            appManager.markDirty(false);
+            return;
+        }
+    }
+
     const ersa::events::Event evt = toErsaInputEvent(legacyEvent);
     const bool handled = appManager.handleEvent(evt);
 
@@ -155,9 +199,10 @@ void WatchUi::tick() {
 
     const uint32_t idleMs = (nowMs >= lastActivityMs) ? (nowMs - lastActivityMs) : 0;
 
-    // Auto-return to watchface after 60 seconds of inactivity on other screens
+    // Auto-return to watchface after 60 seconds of inactivity on other screens (except during calls)
     if (appManager.getActiveApp() != nullptr &&
         strcmp(appManager.getActiveApp()->getId(), "watchface_clock") != 0 &&
+        strcmp(appManager.getActiveApp()->getId(), "app_call") != 0 &&
         (idleMs >= 60000)) {
         DebugLog::log("UI: auto-returning to watchface after 60s idle");
         appManager.switchTo("watchface_clock");

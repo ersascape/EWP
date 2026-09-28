@@ -28,6 +28,8 @@ inline constexpr const char* MSG_PRESS_SYNC_CALDAV = "press B2 to sync CalDAV";
 
 // App Titles & Drawer Labels
 inline constexpr const char* APP_TITLE_CLOCK       = "clock";
+inline constexpr const char* APP_TITLE_NOW_PLAYING = "now playing";
+inline constexpr const char* APP_TITLE_CALLS       = "calls";
 inline constexpr const char* APP_TITLE_CALENDAR    = "calendar";
 inline constexpr const char* APP_TITLE_AGENDA      = "agenda";
 inline constexpr const char* APP_TITLE_TASKS       = "tasks";

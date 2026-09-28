@@ -6,6 +6,8 @@
 #include "apps/app_todo.h"
 #include "apps/app_portal.h"
 #include "apps/app_status.h"
+#include "apps/app_now_playing.h"
+#include "apps/app_call.h"
 #include "core/buttons.h"
 #include "core/watch_clock.h"
 #include "core/debug_log.h"
@@ -59,6 +61,12 @@ public:
                     break;
                 case AppDrawer::Item::Todo:
                     ApplicationManager::instance().switchTo("app_todo");
+                    break;
+                case AppDrawer::Item::NowPlaying:
+                    ApplicationManager::instance().switchTo("app_media");
+                    break;
+                case AppDrawer::Item::Calls:
+                    ApplicationManager::instance().switchTo("app_call");
                     break;
                 case AppDrawer::Item::Hotspot:
                     ApplicationManager::instance().switchTo("app_portal");
@@ -228,12 +236,62 @@ public:
     }
 };
 
+// 7. AppNowPlaying Application
+class MediaApp : public Application {
+public:
+    const char* getId() const override { return "app_media"; }
+    const char* getTitle() const override { return "Now Playing"; }
+
+    void onEvent(const events::Event& event) override {
+        const auto legacy = toLegacyButtonEvent(event);
+        if (AppNowPlaying::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
+    }
+
+    void render(hal::IDisplay& display, bool fullRefresh) override {
+        (void)fullRefresh;
+#if defined(ARDUINO)
+        auto* esp = static_cast<hal::Esp32Display*>(&display);
+        if (esp) AppNowPlaying::render(esp->getGfx());
+#else
+        (void)display;
+#endif
+    }
+};
+
+// 8. AppCall Application
+class CallApp : public Application {
+public:
+    const char* getId() const override { return "app_call"; }
+    const char* getTitle() const override { return "Calls"; }
+
+    void onEvent(const events::Event& event) override {
+        const auto legacy = toLegacyButtonEvent(event);
+        if (AppCall::onButton(legacy)) {
+            ApplicationManager::instance().markDirty(false);
+        }
+    }
+
+    void render(hal::IDisplay& display, bool fullRefresh) override {
+        (void)fullRefresh;
+#if defined(ARDUINO)
+        auto* esp = static_cast<hal::Esp32Display*>(&display);
+        if (esp) AppCall::render(esp->getGfx());
+#else
+        (void)display;
+#endif
+    }
+};
+
 static DrawerApp s_drawerApp;
 static CalendarApp s_calendarApp;
 static AgendaApp s_agendaApp;
 static TodoApp s_todoApp;
 static PortalApp s_portalApp;
 static StatusApp s_statusApp;
+static MediaApp s_mediaApp;
+static CallApp s_callApp;
 
 } // namespace
 
@@ -243,6 +301,8 @@ void registerAllApps(ApplicationManager& manager) {
     AppAgenda::begin();
     AppTodo::begin();
     AppPortal::begin();
+    AppNowPlaying::begin();
+    AppCall::begin();
 
     manager.registerApp(&watchface::AppWatchface::instance());
     manager.registerApp(&s_drawerApp);
@@ -251,6 +311,8 @@ void registerAllApps(ApplicationManager& manager) {
     manager.registerApp(&s_todoApp);
     manager.registerApp(&s_portalApp);
     manager.registerApp(&s_statusApp);
+    manager.registerApp(&s_mediaApp);
+    manager.registerApp(&s_callApp);
 }
 
 } // namespace app

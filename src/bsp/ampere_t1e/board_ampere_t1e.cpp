@@ -52,6 +52,7 @@ Result<void> BoardAmpereT1e::init() {
     battery_.init();
     rtc_.init();
     display_.init();
+    bluetooth_.init();
     return Result<void>();
 }
 

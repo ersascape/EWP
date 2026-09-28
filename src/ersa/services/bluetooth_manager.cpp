@@ -1,0 +1,250 @@
+#include "ersa/services/bluetooth_manager.h"
+#include <string.h>
+
+#if defined(ARDUINO)
+#include <Arduino.h>
+#else
+#include <time.h>
+static uint32_t host_millis() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)((ts.tv_sec * 1000) + (ts.tv_nsec / 1000000));
+}
+#define millis host_millis
+#endif
+
+namespace ersa {
+namespace services {
+
+static BluetoothManager* s_instance = nullptr;
+
+BluetoothManager& BluetoothManager::instance() {
+    return *s_instance;
+}
+
+void BluetoothManager::setInstance(BluetoothManager* inst) {
+    s_instance = inst;
+}
+
+BluetoothManager::BluetoothManager(hal::IBluetooth& ble, events::EventBus& bus)
+    : ble_(ble), bus_(bus) {
+    // Seed standard fallback recent call for instant out-of-the-box quick dial
+    addRecentCall("Home", "+1234567890");
+    addRecentCall("Mom", "+1987654321");
+}
+
+Result<void> BluetoothManager::init() {
+    ble_.setCallCallback(onBleCall, this);
+    ble_.setMediaCallback(onBleMedia, this);
+    ble_.setConnectionCallback(onBleConnection, this);
+
+    Result<void> res = ble_.init();
+    ble_.startAdvertising();
+    return res;
+}
+
+bool BluetoothManager::isConnected() const {
+    return ble_.isConnected();
+}
+
+uint32_t BluetoothManager::getCallDurationSec() const {
+    if (callState_ != CallState::Active || callStartMs_ == 0) return 0;
+    const uint32_t now = millis();
+    return (now >= callStartMs_) ? ((now - callStartMs_) / 1000) : 0;
+}
+
+void BluetoothManager::acceptCall() {
+    ble_.acceptCall();
+    callState_ = CallState::Active;
+    callStartMs_ = millis();
+
+    events::Event evt = events::Event::createCall(
+        events::EventType::CallAccepted, currentCaller_, currentNumber_, 1, callStartMs_);
+    bus_.publish(evt);
+}
+
+void BluetoothManager::rejectCall() {
+    ble_.rejectCall();
+    callState_ = CallState::Ended;
+
+    events::Event evt = events::Event::createCall(
+        events::EventType::CallRejected, currentCaller_, currentNumber_, 2, millis());
+    bus_.publish(evt);
+}
+
+void BluetoothManager::hangupCall() {
+    ble_.hangupCall();
+    callState_ = CallState::Ended;
+
+    events::Event evt = events::Event::createCall(
+        events::EventType::CallEnded, currentCaller_, currentNumber_, 2, millis());
+    bus_.publish(evt);
+}
+
+void BluetoothManager::dial(const char* number, const char* name) {
+    if (!number || number[0] == '\0') return;
+
+    ble_.dial(number);
+
+    strncpy(currentNumber_, number, sizeof(currentNumber_) - 1);
+    currentNumber_[sizeof(currentNumber_) - 1] = '\0';
+
+    if (name && name[0] != '\0') {
+        strncpy(currentCaller_, name, sizeof(currentCaller_) - 1);
+    } else {
+        strncpy(currentCaller_, number, sizeof(currentCaller_) - 1);
+    }
+    currentCaller_[sizeof(currentCaller_) - 1] = '\0';
+
+    callState_ = CallState::Active;
+    callStartMs_ = millis();
+
+    addRecentCall(currentCaller_, currentNumber_);
+
+    events::Event evt = events::Event::createCall(
+        events::EventType::CallAccepted, currentCaller_, currentNumber_, 1, callStartMs_);
+    bus_.publish(evt);
+}
+
+void BluetoothManager::dialRecent(size_t index) {
+    if (recentCount_ == 0) return;
+    if (index >= recentCount_) index = 0;
+    dial(recents_[index].number, recents_[index].name);
+}
+
+const RecentCall& BluetoothManager::getRecentCall(size_t index) const {
+    if (recentCount_ == 0) {
+        static RecentCall empty{"", "", 0};
+        return empty;
+    }
+    return recents_[index < recentCount_ ? index : 0];
+}
+
+void BluetoothManager::addRecentCall(const char* name, const char* number) {
+    if (!number || number[0] == '\0') return;
+
+    // Shift entries down to make room at index 0
+    size_t copyLimit = (recentCount_ < MAX_RECENTS) ? recentCount_ : (MAX_RECENTS - 1);
+    for (size_t i = copyLimit; i > 0; --i) {
+        recents_[i] = recents_[i - 1];
+    }
+
+    if (name && name[0] != '\0') {
+        strncpy(recents_[0].name, name, sizeof(recents_[0].name) - 1);
+    } else {
+        strncpy(recents_[0].name, number, sizeof(recents_[0].name) - 1);
+    }
+    recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
+
+    strncpy(recents_[0].number, number, sizeof(recents_[0].number) - 1);
+    recents_[0].number[sizeof(recents_[0].number) - 1] = '\0';
+    recents_[0].timestampEpoch = millis() / 1000;
+
+    if (recentCount_ < MAX_RECENTS) {
+        recentCount_++;
+    }
+}
+
+void BluetoothManager::mediaPlay() {
+    ble_.mediaCommand(hal::BleMediaAction::Play);
+    mediaPlaying_ = true;
+    bus_.publish(events::Event::createMedia(mediaTitle_, mediaArtist_, true, millis()));
+}
+
+void BluetoothManager::mediaPause() {
+    ble_.mediaCommand(hal::BleMediaAction::Pause);
+    mediaPlaying_ = false;
+    bus_.publish(events::Event::createMedia(mediaTitle_, mediaArtist_, false, millis()));
+}
+
+void BluetoothManager::mediaToggle() {
+    ble_.mediaCommand(hal::BleMediaAction::Toggle);
+    mediaPlaying_ = !mediaPlaying_;
+    bus_.publish(events::Event::createMedia(mediaTitle_, mediaArtist_, mediaPlaying_, millis()));
+}
+
+void BluetoothManager::mediaNext() {
+    ble_.mediaCommand(hal::BleMediaAction::Next);
+}
+
+void BluetoothManager::mediaPrevious() {
+    ble_.mediaCommand(hal::BleMediaAction::Previous);
+}
+
+void BluetoothManager::simulateIncomingCall(const char* name, const char* number) {
+    onBleCall(hal::BleCallAction::Incoming, name, number, this);
+}
+
+void BluetoothManager::simulateMedia(const char* title, const char* artist, bool playing) {
+    onBleMedia(playing, title, artist, this);
+}
+
+void BluetoothManager::onBleCall(hal::BleCallAction action, const char* caller, const char* number, void* user) {
+    auto* self = static_cast<BluetoothManager*>(user);
+    if (!self) return;
+
+    if (action == hal::BleCallAction::Incoming) {
+        self->callState_ = CallState::Incoming;
+        self->callStartMs_ = 0;
+
+        if (caller && caller[0] != '\0') {
+            strncpy(self->currentCaller_, caller, sizeof(self->currentCaller_) - 1);
+        } else {
+            strncpy(self->currentCaller_, number ? number : "Unknown", sizeof(self->currentCaller_) - 1);
+        }
+        self->currentCaller_[sizeof(self->currentCaller_) - 1] = '\0';
+
+        if (number) {
+            strncpy(self->currentNumber_, number, sizeof(self->currentNumber_) - 1);
+            self->currentNumber_[sizeof(self->currentNumber_) - 1] = '\0';
+        } else {
+            self->currentNumber_[0] = '\0';
+        }
+
+        self->addRecentCall(self->currentCaller_, self->currentNumber_);
+
+        events::Event evt = events::Event::createCall(
+            events::EventType::CallIncoming, self->currentCaller_, self->currentNumber_, 0, millis());
+        self->bus_.publish(evt);
+    } else if (action == hal::BleCallAction::Answered) {
+        self->callState_ = CallState::Active;
+        self->callStartMs_ = millis();
+        events::Event evt = events::Event::createCall(
+            events::EventType::CallAccepted, self->currentCaller_, self->currentNumber_, 1, self->callStartMs_);
+        self->bus_.publish(evt);
+    } else if (action == hal::BleCallAction::Rejected || action == hal::BleCallAction::Ended) {
+        self->callState_ = CallState::Ended;
+        events::Event evt = events::Event::createCall(
+            events::EventType::CallEnded, self->currentCaller_, self->currentNumber_, 2, millis());
+        self->bus_.publish(evt);
+    }
+}
+
+void BluetoothManager::onBleMedia(bool playing, const char* title, const char* artist, void* user) {
+    auto* self = static_cast<BluetoothManager*>(user);
+    if (!self) return;
+
+    self->mediaPlaying_ = playing;
+    if (title && title[0] != '\0') {
+        strncpy(self->mediaTitle_, title, sizeof(self->mediaTitle_) - 1);
+        self->mediaTitle_[sizeof(self->mediaTitle_) - 1] = '\0';
+    }
+    if (artist && artist[0] != '\0') {
+        strncpy(self->mediaArtist_, artist, sizeof(self->mediaArtist_) - 1);
+        self->mediaArtist_[sizeof(self->mediaArtist_) - 1] = '\0';
+    }
+
+    events::Event evt = events::Event::createMedia(self->mediaTitle_, self->mediaArtist_, self->mediaPlaying_, millis());
+    self->bus_.publish(evt);
+}
+
+void BluetoothManager::onBleConnection(bool connected, void* user) {
+    auto* self = static_cast<BluetoothManager*>(user);
+    if (!self) return;
+
+    events::Event evt(connected ? events::EventType::BleConnected : events::EventType::BleDisconnected, millis());
+    self->bus_.publish(evt);
+}
+
+} // namespace services
+} // namespace ersa

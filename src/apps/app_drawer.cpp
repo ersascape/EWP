@@ -7,10 +7,12 @@
 namespace AppDrawer {
 
 namespace {
-Item currentSelection = Item::Calendar;
+Item currentSelection = Item::NowPlaying;
 
 const char* const labels[static_cast<size_t>(Item::Count)] = {
     ersa::strings::APP_TITLE_CLOCK,
+    ersa::strings::APP_TITLE_NOW_PLAYING,
+    ersa::strings::APP_TITLE_CALLS,
     ersa::strings::APP_TITLE_CALENDAR,
     ersa::strings::APP_TITLE_AGENDA,
     ersa::strings::APP_TITLE_TASKS,
@@ -21,7 +23,7 @@ const char* const labels[static_cast<size_t>(Item::Count)] = {
 } // namespace
 
 void begin() {
-    currentSelection = Item::Calendar;
+    currentSelection = Item::NowPlaying;
 }
 
 void next() {
@@ -55,32 +57,32 @@ void render(Adafruit_GFX& display, bool full) {
 
     // Clean left-aligned lowercase header
     display.setFont(&MiSansLatin_Bold10pt7b);
-    display.setCursor(18, 24);
+    display.setCursor(18, 22);
     display.print(ersa::strings::APP_DRAWER_HEADER);
 
     // Minimal footer without harsh dividing lines
     display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(18, 186);
+    display.setCursor(18, 190);
     display.print(ersa::strings::NAV_DRAWER_FOOTER);
 
     display.setTextColor(1);
 
-    constexpr int16_t startY = 46;
-    constexpr int16_t rowHeight = 21;
+    constexpr int16_t startY = 38;
+    constexpr int16_t rowHeight = 18;
 
     for (uint8_t i = 0; i < static_cast<uint8_t>(Item::Count); ++i) {
         const int16_t itemY = startY + i * rowHeight;
         const bool isSelected = (i == static_cast<uint8_t>(currentSelection));
 
         if (isSelected) {
-            display.fillRoundRect(14, itemY - 14, 172, 19, 4, 1);
+            display.fillRoundRect(14, itemY - 13, 172, 17, 3, 1);
             display.setTextColor(0); // Black text on white pill
-            display.setFont(&MiSansLatin_Bold10pt7b);
+            display.setFont(&MiSansLatin_Bold8pt7b);
             display.setCursor(24, itemY);
             display.print(labels[i]);
             display.setTextColor(1); // Reset White
         } else {
-            display.setFont(&MiSansLatin_Regular10pt7b);
+            display.setFont(&MiSansLatin_Regular8pt7b);
             display.setCursor(24, itemY);
             display.print(labels[i]);
         }
