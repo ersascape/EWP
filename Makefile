@@ -1,0 +1,30 @@
+.PHONY: all firmware test clean
+
+CXX ?= g++
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -I include -I src -I tests
+
+TEST_SRCS = \
+	tests/main_test.cpp \
+	src/ersa/events/event_bus.cpp \
+	src/ersa/app/application_manager.cpp \
+	src/ersa/services/time_service.cpp \
+	src/ersa/services/power_manager.cpp \
+	src/ersa/services/display_manager.cpp \
+	src/ersa/board.cpp
+
+TEST_BIN = tests/run_tests
+
+all: firmware test
+
+firmware:
+	./scripts/pio.sh run
+
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SRCS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+clean:
+	rm -f $(TEST_BIN)
+	./scripts/pio.sh run -t clean || true
