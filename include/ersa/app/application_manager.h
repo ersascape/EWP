@@ -31,6 +31,8 @@ public:
     void clearDirty();
     bool isDirty() const;
     bool isFullRefreshNeeded() const;
+    bool isAppSwitched() const;
+    void clearAppSwitched();
 
     // Execute render cycle if dirty
     void render(hal::IDisplay& display);
@@ -46,6 +48,7 @@ private:
 
     bool dirty_{true};
     bool fullRefreshNeeded_{true};
+    bool appSwitched_{true};
     uint32_t lastRenderTime_{0};
 };
 

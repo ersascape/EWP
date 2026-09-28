@@ -36,6 +36,9 @@ public:
     virtual void render(hal::IDisplay& display, bool fullRefresh) { (void)display; (void)fullRefresh; }
     virtual void render(ui::Canvas& canvas) { (void)canvas; }
 
+    // Dynamic partial refresh bounds (sub-window for fast flicker-free updates)
+    virtual Rect getPartialBounds() const { return Rect{0, 0, 200, 200}; }
+
     virtual void tick() {}
 };
 

@@ -58,6 +58,7 @@ bool ApplicationManager::switchTo(size_t index) {
         activeApp_->onStart();
         activeApp_->onResume();
     }
+    appSwitched_ = true;
     markDirty(false);
     return true;
 }
@@ -102,11 +103,32 @@ bool ApplicationManager::isFullRefreshNeeded() const {
     return fullRefreshNeeded_;
 }
 
+bool ApplicationManager::isAppSwitched() const {
+    return appSwitched_;
+}
+
+void ApplicationManager::clearAppSwitched() {
+    appSwitched_ = false;
+}
+
 void ApplicationManager::render(hal::IDisplay& display) {
     if (!dirty_ || !activeApp_) return;
 
-    activeApp_->render(display, fullRefreshNeeded_);
-    display.refresh(fullRefreshNeeded_);
+    const bool full = fullRefreshNeeded_ || appSwitched_;
+    if (full) {
+        activeApp_->render(display, true);
+        display.refresh(fullRefreshNeeded_);
+        appSwitched_ = false;
+    } else {
+        const Rect bounds = activeApp_->getPartialBounds();
+        if (bounds.w >= display.width() && bounds.h >= display.height()) {
+            activeApp_->render(display, false);
+            display.refresh(false);
+        } else {
+            activeApp_->render(display, false);
+            display.refreshRect(bounds);
+        }
+    }
 
     dirty_ = false;
     fullRefreshNeeded_ = false;

@@ -19,10 +19,13 @@ public:
     void onEvent(const events::Event& event) override;
     void render(hal::IDisplay& display, bool fullRefresh) override;
 
+    Rect getPartialBounds() const override { return Rect{0, 16, 200, 124}; }
+
     static AppWatchface& instance();
 
 private:
     uint32_t shownMinute_{UINT32_MAX};
+    uint8_t shownDay_{0};
     bool shownRtcHealthy_{false};
 };
 

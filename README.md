@@ -22,9 +22,9 @@ An open-source, modular embedded operating environment and minimalist smartwatch
 
 ---
 
-## Ersa OS — Layered Architecture
+## Ersa Wearable Platform — Layered Architecture
 
-Ersa OS is designed as a modular, low-power embedded operating environment. The architecture is decoupled so system services, event management, and applications are completely hardware-independent:
+Ersa Wearable Platform is designed as a modular, low-power embedded operating environment. The architecture is decoupled so system services, event management, and applications are completely hardware-independent:
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
@@ -148,7 +148,7 @@ Ersa-W1/
 │   │   ├── app_portal.*           # Wi-Fi captive configuration portal
 │   │   ├── app_status.*           # Hardware diagnostics & battery stats
 │   │   ├── app_todo.*             # CalDAV to-do checklist
-│   │   └── apps_registry.*        # App registration & Ersa OS bridge
+│   │   └── apps_registry.*        # App registration & EWP bridge
 │   ├── bsp/
 │   │   └── ampere_t1e/            # Ampere Works T1E board support package
 │   ├── core/
@@ -220,8 +220,8 @@ bash scripts/pio.sh device monitor
 
 ## Adding Support for New Boards
 
-Ersa OS is designed to be hardware-agnostic. To add support for a new board, display, or MCU, see the comprehensive guide:
-- 📖 [**Adding Board Support to Ersa OS**](docs/ADDING_A_BOARD.md)
+Ersa Wearable Platform is designed to be hardware-agnostic. To add support for a new board, display, or MCU, see the comprehensive guide:
+- 📖 [**Adding Board Support to Ersa Wearable Platform**](docs/ADDING_A_BOARD.md)
 
 ---
 

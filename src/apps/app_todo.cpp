@@ -59,25 +59,37 @@ bool onButton(Buttons::Event event) {
     return false;
 }
 
-void render(Adafruit_GFX& display) {
-    display.fillScreen(0);   // Solid black
-    display.setTextColor(1); // White
+void render(Adafruit_GFX& display, bool full) {
+    if (full) {
+        display.fillScreen(0);   // Solid black
+        display.setTextColor(1); // White
 
-    // Clean lowercase header
-    display.setFont(&MiSansLatin_Bold10pt7b);
-    display.setCursor(18, 24);
-    display.print(ersa::strings::APP_TITLE_TASKS);
+        // Clean lowercase header
+        display.setFont(&MiSansLatin_Bold10pt7b);
+        display.setCursor(18, 24);
+        display.print(ersa::strings::APP_TITLE_TASKS);
 
-    const size_t total = NetSync::todoCount();
+        const size_t total = NetSync::todoCount();
+        if (total > 0) {
+            char countBuf[20];
+            snprintf(countBuf, sizeof(countBuf), "%u tasks", unsigned(total));
+            drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
+        } else {
+            drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
+        }
 
-    if (total > 0) {
-        char countBuf[20];
-        snprintf(countBuf, sizeof(countBuf), "%u tasks", unsigned(total));
-        drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
+        // Clean minimal footer
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(18, 186);
+        display.print((total == 0) ? ersa::strings::NAV_TODO_EMPTY_FOOT : ersa::strings::NAV_TODO_FOOTER);
     } else {
-        drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
+        // Partial refresh: clear ONLY the tasks content area (y: 32 to 170)
+        display.fillRect(0, 32, 200, 138, 0);
     }
 
+    display.setTextColor(1);
+
+    const size_t total = NetSync::todoCount();
     if (total == 0) {
         display.setFont(&MiSansLatin_Regular10pt7b);
         display.setCursor(18, 70);
@@ -86,9 +98,6 @@ void render(Adafruit_GFX& display) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(18, 96);
         display.print(ersa::strings::MSG_PRESS_SYNC_CALDAV);
-
-        display.setCursor(18, 186);
-        display.print(ersa::strings::NAV_TODO_EMPTY_FOOT);
         return;
     }
 
@@ -140,11 +149,6 @@ void render(Adafruit_GFX& display) {
         const int16_t thumbY = barY + int((topVisibleIndex * (barH - thumbH)) / (total - VISIBLE_ITEMS));
         display.fillRect(barX - 1, thumbY, 3, thumbH, 1);
     }
-
-    // Clean minimal footer
-    display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(18, 186);
-    display.print(ersa::strings::NAV_TODO_FOOTER);
 }
 
 } // namespace AppTodo

@@ -52,36 +52,61 @@ ersa::events::Event toErsaInputEvent(Buttons::Event legacy) {
 void renderCurrentApp() {
     const uint32_t started = millis();
     const DateTime time = WatchClock::now();
-    const bool full = firstFrame || partialFrames >= 25;
-
-    DebugLog::log("EPD begin app=%s mode=%s time=%02u:%02u:%02u",
-                  appManager.getActiveApp() ? appManager.getActiveApp()->getId() : "none",
-                  full ? "full" : "partial",
-                  unsigned(time.hour()), unsigned(time.minute()), unsigned(time.second()));
+    auto* activeApp = appManager.getActiveApp();
+    if (!activeApp) return;
 
     auto& espDisp = board.getEsp32Display();
     auto& gx = espDisp.getGxDisplay();
 
-    if (full) gx.setFullWindow();
-    else gx.setPartialWindow(0, 0, gx.width(), gx.height());
+    // 1. Hardware full refresh (waveform clear): firstFrame or periodic (every 30 partial updates)
+    // 2. Full-canvas redraw (fast partial refresh): app switched or app requested full refresh
+    // 3. Sub-window partial refresh: dynamic sub-region inside current app
+    const bool hardwareFull = firstFrame || (partialFrames >= 30);
+    const bool fullCanvas = hardwareFull || appManager.isFullRefreshNeeded() || appManager.isAppSwitched();
 
-    gx.firstPage();
-    do {
+    DebugLog::log("EPD begin app=%s hwFull=%d fullCanvas=%d time=%02u:%02u:%02u",
+                  activeApp->getId(), hardwareFull, fullCanvas,
+                  unsigned(time.hour()), unsigned(time.minute()), unsigned(time.second()));
+
+    if (fullCanvas) {
         gx.fillScreen(GxEPD_BLACK);
         gx.setTextColor(GxEPD_WHITE);
         gx.setTextWrap(false);
+        activeApp->render(espDisp, true);
 
-        if (appManager.getActiveApp()) {
-            appManager.getActiveApp()->render(espDisp, full);
+        if (hardwareFull) {
+            gx.setFullWindow();
+            gx.display(false); // Hardware full refresh (clears ghosting)
+            partialFrames = 0;
+            firstFrame = false;
+        } else {
+            gx.display(true);  // Hardware fast partial refresh of full screen (differential, no flash)
+            partialFrames++;
         }
-    } while (gx.nextPage());
+        appManager.clearAppSwitched();
+    } else {
+        const ersa::Rect bounds = activeApp->getPartialBounds();
+        if (bounds.w >= gx.width() && bounds.h >= gx.height()) {
+            gx.fillScreen(GxEPD_BLACK);
+            gx.setTextColor(GxEPD_WHITE);
+            gx.setTextWrap(false);
+            activeApp->render(espDisp, false);
+            gx.display(true);
+        } else {
+            // Windowed partial refresh: clear ONLY the sub-window in buffer
+            gx.fillRect(bounds.x, bounds.y, bounds.w, bounds.h, GxEPD_BLACK);
+            gx.setTextColor(GxEPD_WHITE);
+            gx.setTextWrap(false);
+            activeApp->render(espDisp, false);
+            gx.displayWindow(bounds.x, bounds.y, bounds.w, bounds.h);
+        }
+        partialFrames++;
+    }
 
     panelPowered = true;
     lastActivityMs = millis();
-    partialFrames = full ? 0 : partialFrames + 1;
     shownMinute = time.unixtime() / 60;
     shownRtcHealthy = WatchClock::healthy();
-    firstFrame = false;
     lastFrameEnd = millis();
 
     DebugLog::log("EPD end duration=%lu ms BUSY=%d (partialFrames=%u)",
@@ -142,7 +167,8 @@ void WatchUi::tick() {
         appManager.markDirty(false);
     }
 
-    if (appManager.isDirty() && (nowMs - lastFrameEnd >= 550)) {
+    const bool displayBusy = board.getEsp32Display().isBusy();
+    if (appManager.isDirty() && !displayBusy && (nowMs - lastFrameEnd >= 150)) {
         renderCurrentApp();
         appManager.clearDirty();
     }

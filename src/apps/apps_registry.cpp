@@ -72,13 +72,16 @@ public:
         }
     }
 
+    Rect getPartialBounds() const override {
+        return Rect{0, 32, 200, 138};
+    }
+
     void render(hal::IDisplay& display, bool fullRefresh) override {
-        (void)fullRefresh;
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
-        if (esp) AppDrawer::render(esp->getGfx());
+        if (esp) AppDrawer::render(esp->getGfx(), fullRefresh);
 #else
-        (void)display;
+        (void)display; (void)fullRefresh;
 #endif
     }
 };
@@ -132,13 +135,16 @@ public:
         }
     }
 
+    Rect getPartialBounds() const override {
+        return Rect{0, 0, 200, 172};
+    }
+
     void render(hal::IDisplay& display, bool fullRefresh) override {
-        (void)fullRefresh;
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
-        if (esp) AppAgenda::render(esp->getGfx(), WatchClock::now());
+        if (esp) AppAgenda::render(esp->getGfx(), WatchClock::now(), fullRefresh);
 #else
-        (void)display;
+        (void)display; (void)fullRefresh;
 #endif
     }
 };
@@ -160,13 +166,16 @@ public:
         }
     }
 
+    Rect getPartialBounds() const override {
+        return Rect{0, 32, 200, 138};
+    }
+
     void render(hal::IDisplay& display, bool fullRefresh) override {
-        (void)fullRefresh;
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
-        if (esp) AppTodo::render(esp->getGfx());
+        if (esp) AppTodo::render(esp->getGfx(), fullRefresh);
 #else
-        (void)display;
+        (void)display; (void)fullRefresh;
 #endif
     }
 };

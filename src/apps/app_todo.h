@@ -5,7 +5,7 @@
 namespace AppTodo {
 
 void begin();
-void render(Adafruit_GFX& display);
+void render(Adafruit_GFX& display, bool full = true);
 bool onButton(Buttons::Event event);
 
 } // namespace AppTodo

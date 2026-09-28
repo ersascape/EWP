@@ -40,24 +40,27 @@ void AppWatchface::onEvent(const events::Event& event) {
         if (event.button.button == events::ButtonId::Button2) {
             app::ApplicationManager::instance().switchTo("app_drawer");
         }
-    } else if (event.type == events::EventType::MinuteTick ||
-               event.type == events::EventType::BatteryChanged) {
-        app::ApplicationManager::instance().markDirty(false);
+    } else if (event.type == events::EventType::BatteryChanged) {
+        app::ApplicationManager::instance().markDirty(true);
+    } else if (event.type == events::EventType::MinuteTick) {
+        DateTime time = WatchClock::now();
+        bool needFull = (shownDay_ != 0 && time.day() != shownDay_);
+        app::ApplicationManager::instance().markDirty(needFull);
     }
 }
 
 void AppWatchface::render(hal::IDisplay& display, bool fullRefresh) {
-    (void)fullRefresh;
 #if defined(ARDUINO)
     auto* espDisplay = static_cast<hal::Esp32Display*>(&display);
     if (espDisplay) {
         DateTime time = WatchClock::now();
-        WatchfaceClock::render(espDisplay->getGfx(), time);
+        WatchfaceClock::render(espDisplay->getGfx(), time, fullRefresh);
         shownMinute_ = time.unixtime() / 60;
+        shownDay_ = time.day();
         shownRtcHealthy_ = WatchClock::healthy();
     }
 #else
-    (void)display;
+    (void)display; (void)fullRefresh;
 #endif
 }
 

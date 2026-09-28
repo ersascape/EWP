@@ -42,9 +42,23 @@ bool onButton(Buttons::Event event) {
     return false;
 }
 
-void render(Adafruit_GFX& display, const DateTime& now) {
-    display.fillScreen(0);   // Solid black
-    display.setTextColor(1); // White
+void render(Adafruit_GFX& display, const DateTime& now, bool full) {
+    (void)now;
+    if (full) {
+        display.fillScreen(0);   // Solid black
+        display.setTextColor(1); // White
+
+        // Clean minimal footer
+        display.setFont(&MiSansLatin_Regular8pt7b);
+        display.setCursor(18, 186);
+        const size_t total = NetSync::eventCount();
+        display.print((total == 0) ? ersa::strings::NAV_AGENDA_EMPTY_FOOT : ersa::strings::NAV_AGENDA_FOOTER);
+    } else {
+        // Partial refresh: clear header and cards area (y: 0 to 172), leaving footer intact
+        display.fillRect(0, 0, 200, 172, 0);
+    }
+
+    display.setTextColor(1);
 
     // Clean lowercase header
     display.setFont(&MiSansLatin_Bold10pt7b);
@@ -70,9 +84,6 @@ void render(Adafruit_GFX& display, const DateTime& now) {
         display.setFont(&MiSansLatin_Regular8pt7b);
         display.setCursor(18, 96);
         display.print(ersa::strings::MSG_PRESS_SYNC_CALDAV);
-
-        display.setCursor(18, 186);
-        display.print(ersa::strings::NAV_AGENDA_EMPTY_FOOT);
         return;
     }
 
@@ -108,11 +119,6 @@ void render(Adafruit_GFX& display, const DateTime& now) {
         display.setCursor(cardX + 12, cardY + 42);
         display.print(titleBuf);
     }
-
-    // Clean minimal footer
-    display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(18, 186);
-    display.print(ersa::strings::NAV_AGENDA_FOOTER);
 }
 
 } // namespace AppAgenda

@@ -18,6 +18,6 @@ void next();
 void previous();
 Item selected();
 void setSelected(Item item);
-void render(Adafruit_GFX& display);
+void render(Adafruit_GFX& display, bool full = true);
 
 } // namespace AppDrawer

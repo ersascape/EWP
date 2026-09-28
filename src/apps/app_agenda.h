@@ -6,7 +6,7 @@
 namespace AppAgenda {
 
 void begin();
-void render(Adafruit_GFX& display, const DateTime& now);
+void render(Adafruit_GFX& display, const DateTime& now, bool full = true);
 bool onButton(Buttons::Event event);
 
 } // namespace AppAgenda

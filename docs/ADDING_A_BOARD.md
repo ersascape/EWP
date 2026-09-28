@@ -1,4 +1,4 @@
-# Adding Board Support to Ersa OS
+# Adding Board Support to Ersa Wearable Platform
 
 This guide walks you through adding support for a new hardware target or development board to the **Ersa Wearable Platform (EWP)**.
 
@@ -6,7 +6,7 @@ This guide walks you through adding support for a new hardware target or develop
 
 ## 1. Architectural Overview
 
-Ersa OS is built with strict boundary layering to keep applications, system services, and UI components completely decoupled from underlying hardware:
+Ersa Wearable Platform is built with strict boundary layering to keep applications, system services, and UI components completely decoupled from underlying hardware:
 
 ```text
 ┌───────────────────────────────────────────────┐
@@ -30,7 +30,7 @@ Ersa OS is built with strict boundary layering to keep applications, system serv
 └───────────────────────────────────────────────┘
 ```
 
-When porting Ersa OS to a new board:
+When porting Ersa Wearable Platform to a new board:
 - You **do not** modify applications or services.
 - You **implement a Board class** that describes the board's capabilities, pins, and display geometry, and binds concrete HAL driver instances.
 - If your board uses existing supported components (e.g. ESP32-C3 + DS3231 + GxEPD2 e-paper), you simply instantiate the existing HAL drivers with your board's pin definitions.

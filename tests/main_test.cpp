@@ -170,6 +170,17 @@ void test_application_manager() {
     TEST_ASSERT(appB.startCount == 1, "App B started");
     TEST_ASSERT(appB.resumeCount == 1, "App B resumed");
     TEST_ASSERT(mgr.getActiveApp() == &appB, "App B is now active");
+    TEST_ASSERT(mgr.isAppSwitched(), "App switch flag is set");
+
+    // 5. Render after app switch clears the switch flag
+    mgr.render(display);
+    TEST_ASSERT(!mgr.isAppSwitched(), "App switch flag cleared after render");
+
+    // 6. Test sub-window partial refresh within same app
+    mgr.handleEvent(evt); // marks dirty without app switch
+    const uint32_t partialsBefore = display.partialRefreshes_;
+    mgr.render(display);
+    TEST_ASSERT(display.partialRefreshes_ == partialsBefore + 1, "Partial refresh executed");
 
     TEST_PASS();
 }

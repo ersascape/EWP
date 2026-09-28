@@ -60,16 +60,15 @@ void Esp32Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, Color co
 void Esp32Display::refresh(bool full) {
     if (full) {
         display_.setFullWindow();
+        display_.display(false); // Full refresh with clearing waveform
     } else {
-        display_.setPartialWindow(0, 0, display_.width(), display_.height());
+        display_.display(true);  // Fast partial refresh of full screen (differential, no flash)
     }
-    display_.display(false);
     powered_ = true;
 }
 
 void Esp32Display::refreshRect(const Rect& rect) {
-    display_.setPartialWindow(rect.x, rect.y, rect.w, rect.h);
-    display_.display(false);
+    display_.displayWindow(rect.x, rect.y, rect.w, rect.h);
     powered_ = true;
 }
 
