@@ -212,12 +212,33 @@ Compile the production firmware using PlatformIO:
 ```bash
 make firmware
 ```
+The `Firmware` GitHub Actions workflow also builds on pull requests and pushes to
+`master`, then stores the application image and factory image as a 30-day workflow
+artifact. To publish downloadable firmware under **GitHub Releases**, push a version
+tag such as:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for
+factory flashing, checksums, and flashing instructions. Factory flashing resets saved
+watch settings; see the attached `FLASHING.md` before using it.
 
 ### 3. Flash to Device
-Connect the Ampere Works T1E via USB-C and upload:
+Download `ewp-factory.bin` from a GitHub Release, connect the Ampere Works T1E via
+USB-C, then run the one-command flasher:
+
 ```bash
-bash scripts/pio.sh run --target upload
+./scripts/flash_firmware.sh ~/Downloads/ewp-factory.bin
 ```
+
+The script chooses the factory or app offset from the image name and detects a
+single connected serial port. If more than one port is available, pass it explicitly:
+`./scripts/flash_firmware.sh ~/Downloads/ewp-factory.bin /dev/ttyACM0`. With no image
+argument it uses a locally packaged factory image, or falls back to the local build's
+`firmware.bin` app image. Factory flashing resets saved watch settings.
 
 ### 4. Serial Monitor
 ```bash
