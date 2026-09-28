@@ -7,7 +7,7 @@ enum class Item : uint8_t {
     Clock = 0,
     NowPlaying,
     Calls,
-    Pairing,
+    Notifications,
     Calendar,
     Agenda,
     Todo,

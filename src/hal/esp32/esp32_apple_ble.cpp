@@ -30,6 +30,8 @@ public:
     void* callUserData_{nullptr};
     BleMediaCallback mediaCb_{nullptr};
     void* mediaUserData_{nullptr};
+    BleNotificationCallback notifCb_{nullptr};
+    void* notifUserData_{nullptr};
 
     esp_bd_addr_t peerBda_{0};
     esp_ble_addr_type_t addrType_{BLE_ADDR_TYPE_RANDOM};
@@ -46,6 +48,11 @@ public:
 
     uint32_t currentCallUid_{0};
     bool callActive_{false};
+    char lastCaller_[32] = "";
+    char lastNumber_[20] = "";
+
+    char pendingNotifTitle_[32] = "";
+    char pendingNotifMessage_[64] = "";
 
     char trackTitle_[32] = "";
     char trackArtist_[32] = "";
@@ -54,14 +61,16 @@ public:
     void handleAncsNotification(uint8_t* pData, size_t length) {
         if (length < 8) return;
         uint8_t eventId = pData[0];     // 0=Added, 1=Modified, 2=Removed
-        uint8_t categoryId = pData[2];  // 1=IncomingCall, 2=MissedCall
+        uint8_t eventFlags = pData[1];  // bit 3 = positive action, bit 4 = negative action
+        uint8_t categoryId = pData[2];  // 1=IncomingCall, 2=MissedCall, 4=Social, 0=Other
         uint32_t uid = (uint32_t)pData[4] | ((uint32_t)pData[5] << 8) |
                        ((uint32_t)pData[6] << 16) | ((uint32_t)pData[7] << 24);
 
-        DebugLog::log("ANCS: Notif event=%u cat=%u uid=%lu", eventId, categoryId, (unsigned long)uid);
+        DebugLog::log("ANCS: Notif event=%u cat=%u uid=%lu flags=0x%02X",
+                      eventId, categoryId, (unsigned long)uid, eventFlags);
 
         if (categoryId == 1) { // Incoming Call
-            if (eventId == 0) { // Added
+            if (eventId == 0 || eventId == 1) { // Added or Modified (ringing)
                 currentCallUid_ = uid;
                 callActive_ = true;
 
@@ -72,21 +81,32 @@ public:
 
                 // Request Caller Name (Attribute 1) and Caller Number (Attribute 3)
                 if (pAncsControlPoint_) {
-                    uint8_t getAttrCmd[] = {
-                        0x00, // Command: Get Notification Attributes
-                        pData[4], pData[5], pData[6], pData[7], // UID
-                        0x01, 0x20, 0x00, // Attribute 1 (Title/Caller), max 32 bytes
-                        0x03, 0x20, 0x00  // Attribute 3 (Message/Number), max 32 bytes
-                    };
-                    pAncsControlPoint_->writeValue(getAttrCmd, sizeof(getAttrCmd), true);
+                    uint8_t vTitle[] = {0x00, pData[4], pData[5], pData[6], pData[7], 0x01, 0x20, 0x00};
+                    pAncsControlPoint_->writeValue(vTitle, sizeof(vTitle), true);
+
+                    uint8_t vMsg[] = {0x00, pData[4], pData[5], pData[6], pData[7], 0x03, 0x20, 0x00};
+                    pAncsControlPoint_->writeValue(vMsg, sizeof(vMsg), true);
                 }
             } else if (eventId == 2) { // Removed (call answered or dismissed)
                 if (callActive_ && uid == currentCallUid_) {
                     callActive_ = false;
+                    lastCaller_[0] = '\0';
+                    lastNumber_[0] = '\0';
                     DebugLog::log("ANCS: Incoming call ended/dismissed");
                     if (callCb_) {
                         callCb_(BleCallAction::Ended, "", "", callUserData_);
                     }
+                }
+            }
+        } else {
+            // General Notification (SMS, WhatsApp, Mail, Calendar, etc.)
+            if (eventId == 0) { // Added
+                if (pAncsControlPoint_) {
+                    uint8_t vTitle[] = {0x00, pData[4], pData[5], pData[6], pData[7], 0x01, 0x20, 0x00};
+                    pAncsControlPoint_->writeValue(vTitle, sizeof(vTitle), true);
+
+                    uint8_t vMsg[] = {0x00, pData[4], pData[5], pData[6], pData[7], 0x03, 0x40, 0x00};
+                    pAncsControlPoint_->writeValue(vMsg, sizeof(vMsg), true);
                 }
             }
         }
@@ -94,32 +114,49 @@ public:
 
     void handleAncsDataSource(uint8_t* pData, size_t length) {
         if (length < 8 || pData[0] != 0) return; // CommandID 0 = GetNotificationAttributes
-        size_t idx = 5; // Skip CommandID (1) + UID (4)
-        char caller[32] = "";
-        char number[20] = "";
+        uint32_t uid = (uint32_t)pData[1] | ((uint32_t)pData[2] << 8) |
+                       ((uint32_t)pData[3] << 16) | ((uint32_t)pData[4] << 24);
+        uint8_t attrId = pData[5];
+        uint16_t attrLen = (uint16_t)pData[6] | ((uint16_t)pData[7] << 8);
 
-        while (idx + 3 <= length) {
-            uint8_t attrId = pData[idx];
-            uint16_t attrLen = (uint16_t)pData[idx + 1] | ((uint16_t)pData[idx + 2] << 8);
-            idx += 3;
-            if (idx + attrLen > length) break;
-
-            if (attrId == 1) { // Title / Caller name
-                size_t cpy = (attrLen < sizeof(caller) - 1) ? attrLen : (sizeof(caller) - 1);
-                memcpy(caller, &pData[idx], cpy);
-                caller[cpy] = '\0';
-            } else if (attrId == 3) { // Message / Number
-                size_t cpy = (attrLen < sizeof(number) - 1) ? attrLen : (sizeof(number) - 1);
-                memcpy(number, &pData[idx], cpy);
-                number[cpy] = '\0';
-            }
-            idx += attrLen;
+        char text[65] = "";
+        size_t available = (length > 8) ? (length - 8) : 0;
+        size_t cpy = (available < attrLen) ? available : attrLen;
+        if (cpy >= sizeof(text)) cpy = sizeof(text) - 1;
+        if (cpy > 0) {
+            memcpy(text, &pData[8], cpy);
         }
+        text[cpy] = '\0';
 
-        if (strlen(caller) > 0 && callActive_) {
-            DebugLog::log("ANCS: Resolved caller: '%s' (%s)", caller, number);
-            if (callCb_) {
-                callCb_(BleCallAction::Incoming, caller, number, callUserData_);
+        DebugLog::log("ANCS: Data Source uid=%lu attrId=%u len=%u val='%s'",
+                      (unsigned long)uid, attrId, attrLen, text);
+
+        if (callActive_ && uid == currentCallUid_) {
+            if (attrId == 1 && cpy > 0) { // Caller Name
+                strncpy(lastCaller_, text, sizeof(lastCaller_) - 1);
+                lastCaller_[sizeof(lastCaller_) - 1] = '\0';
+                if (callCb_) {
+                    callCb_(BleCallAction::Incoming, lastCaller_, lastNumber_, callUserData_);
+                }
+            } else if (attrId == 3 && cpy > 0) { // Caller Number
+                strncpy(lastNumber_, text, sizeof(lastNumber_) - 1);
+                lastNumber_[sizeof(lastNumber_) - 1] = '\0';
+                if (callCb_) {
+                    callCb_(BleCallAction::Incoming, lastCaller_, lastNumber_, callUserData_);
+                }
+            }
+        } else {
+            // General Notification
+            if (attrId == 1 && cpy > 0) {
+                strncpy(pendingNotifTitle_, text, sizeof(pendingNotifTitle_) - 1);
+                pendingNotifTitle_[sizeof(pendingNotifTitle_) - 1] = '\0';
+            } else if (attrId == 3 && cpy > 0) {
+                strncpy(pendingNotifMessage_, text, sizeof(pendingNotifMessage_) - 1);
+                pendingNotifMessage_[sizeof(pendingNotifMessage_) - 1] = '\0';
+                if (notifCb_) {
+                    const char* title = pendingNotifTitle_[0] ? pendingNotifTitle_ : "Notification";
+                    notifCb_(title, pendingNotifMessage_, "Messages", uid, notifUserData_);
+                }
             }
         }
     }
@@ -220,12 +257,22 @@ public:
                         pAncsNotifSource_->registerForNotify([this](BLERemoteCharacteristic*, uint8_t* pData, size_t length, bool) {
                             this->handleAncsNotification(pData, length);
                         });
-                        DebugLog::log("BLE-Apple: Subscribed to ANCS Notification Source (Phone Calls)");
+                        uint8_t cccd[] = {0x01, 0x00};
+                        BLERemoteDescriptor* pDesc = pAncsNotifSource_->getDescriptor(BLEUUID((uint16_t)0x2902));
+                        if (pDesc) {
+                            pDesc->writeValue(cccd, 2, true);
+                        }
+                        DebugLog::log("BLE-Apple: Subscribed to ANCS Notification Source (Calls & Messages)");
                     }
                     if (pAncsDataSource_) {
                         pAncsDataSource_->registerForNotify([this](BLERemoteCharacteristic*, uint8_t* pData, size_t length, bool) {
                             this->handleAncsDataSource(pData, length);
                         });
+                        uint8_t cccd[] = {0x01, 0x00};
+                        BLERemoteDescriptor* pDesc = pAncsDataSource_->getDescriptor(BLEUUID((uint16_t)0x2902));
+                        if (pDesc) {
+                            pDesc->writeValue(cccd, 2, true);
+                        }
                         DebugLog::log("BLE-Apple: Subscribed to ANCS Data Source");
                     }
                 }
@@ -299,6 +346,11 @@ void Esp32AppleClient::setCallCallback(BleCallCallback cb, void* userData) {
 void Esp32AppleClient::setMediaCallback(BleMediaCallback cb, void* userData) {
     pImpl_->mediaCb_ = cb;
     pImpl_->mediaUserData_ = userData;
+}
+
+void Esp32AppleClient::setNotificationCallback(BleNotificationCallback cb, void* userData) {
+    pImpl_->notifCb_ = cb;
+    pImpl_->notifUserData_ = userData;
 }
 
 void Esp32AppleClient::startDiscovery(const esp_bd_addr_t bda, esp_ble_addr_type_t addrType) {

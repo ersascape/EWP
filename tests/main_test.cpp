@@ -604,7 +604,32 @@ void test_bluetooth_manager() {
     TEST_ASSERT(mockBle.mediaCmdCount() == 3, "mediaCommand should be called 3 times");
     TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Previous, "Action should be Previous");
 
-    // 9. Disconnect
+    // 9. Test Notification
+    bool gotNotification = false;
+    char notifTitle[32] = "";
+    char notifMsg[64] = "";
+    struct NotifCapture {
+        bool* got;
+        char* title;
+        char* msg;
+    } cap{&gotNotification, notifTitle, notifMsg};
+
+    bus.subscribe(events::EventType::NotificationReceived, [](const events::Event& e, void* u) {
+        auto* c = static_cast<NotifCapture*>(u);
+        *c->got = true;
+        strncpy(c->title, e.notification.title, 31);
+        strncpy(c->msg, e.notification.message, 63);
+    }, &cap);
+
+    mockBle.simulateNotification("WhatsApp", "Hey! Meeting starts in 5 mins", "WhatsApp", 42);
+    TEST_ASSERT(gotNotification, "EventBus should receive NotificationReceived");
+    TEST_ASSERT(strcmp(notifTitle, "WhatsApp") == 0, "Event title should match");
+    TEST_ASSERT(strcmp(notifMsg, "Hey! Meeting starts in 5 mins") == 0, "Event message should match");
+    TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Should have 1 notification in history");
+    TEST_ASSERT(strcmp(bleMgr.getNotification(0).title, "WhatsApp") == 0, "Notification title should match");
+    TEST_ASSERT(strcmp(bleMgr.getNotification(0).message, "Hey! Meeting starts in 5 mins") == 0, "Notification message should match");
+
+    // 10. Disconnect
     mockBle.simulateConnection(false);
     TEST_ASSERT(!bleMgr.isConnected(), "Should report disconnected");
     TEST_ASSERT(gotBleDisconnected, "EventBus should receive BleDisconnected");

@@ -20,6 +20,14 @@ struct RecentCall {
     uint32_t timestampEpoch;
 };
 
+struct AppNotification {
+    char title[32];
+    char message[64];
+    char app[20];
+    uint32_t uid;
+    uint32_t timestampEpoch;
+};
+
 class BluetoothManager {
 public:
     static BluetoothManager& instance();
@@ -65,11 +73,19 @@ public:
     // Testing / Simulation hooks
     void simulateIncomingCall(const char* name, const char* number);
     void simulateMedia(const char* title, const char* artist, bool playing);
+    void simulateNotification(const char* title, const char* message, const char* app = "Messages");
+
+    // Notifications history
+    size_t getNotificationCount() const { return notifCount_; }
+    const AppNotification& getNotification(size_t index) const;
+    void addNotification(const char* title, const char* message, const char* app, uint32_t uid);
+    void clearNotifications();
 
 private:
     static void onBleCall(hal::BleCallAction action, const char* caller, const char* number, void* user);
     static void onBleMedia(bool playing, const char* title, const char* artist, void* user);
     static void onBleConnection(bool connected, void* user);
+    static void onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, void* user);
 
     hal::IBluetooth& ble_;
     events::EventBus& bus_;
@@ -82,6 +98,10 @@ private:
     static constexpr size_t MAX_RECENTS = 5;
     RecentCall recents_[MAX_RECENTS];
     size_t recentCount_{0};
+
+    static constexpr size_t MAX_NOTIFS = 10;
+    AppNotification notifications_[MAX_NOTIFS];
+    size_t notifCount_{0};
 
     bool mediaPlaying_{false};
     char mediaTitle_[32]{"No Media"};

@@ -25,6 +25,7 @@ public:
     void setCallCallback(hal::BleCallCallback, void*) override {}
     void setMediaCallback(hal::BleMediaCallback, void*) override {}
     void setConnectionCallback(hal::BleConnectionCallback, void*) override {}
+    void setNotificationCallback(hal::BleNotificationCallback, void*) override {}
     void acceptCall() override {}
     void rejectCall() override {}
     void hangupCall() override {}
@@ -61,6 +62,7 @@ Result<void> BluetoothManager::init() {
     ble_.setCallCallback(onBleCall, this);
     ble_.setMediaCallback(onBleMedia, this);
     ble_.setConnectionCallback(onBleConnection, this);
+    ble_.setNotificationCallback(onBleNotification, this);
 
     Result<void> res = ble_.init();
     ble_.startAdvertising();
@@ -280,6 +282,55 @@ void BluetoothManager::onBleConnection(bool connected, void* user) {
     if (!self) return;
 
     events::Event evt(connected ? events::EventType::BleConnected : events::EventType::BleDisconnected, millis());
+    self->bus_.publish(evt);
+}
+
+void BluetoothManager::simulateNotification(const char* title, const char* message, const char* app) {
+    onBleNotification(title, message, app, 1, this);
+}
+
+const AppNotification& BluetoothManager::getNotification(size_t index) const {
+    if (notifCount_ == 0) {
+        static AppNotification empty{"", "", "", 0, 0};
+        return empty;
+    }
+    return notifications_[index < notifCount_ ? index : 0];
+}
+
+void BluetoothManager::addNotification(const char* title, const char* message, const char* app, uint32_t uid) {
+    if (!title && !message) return;
+
+    const size_t maxShift = (notifCount_ < MAX_NOTIFS) ? notifCount_ : (MAX_NOTIFS - 1);
+    for (size_t i = maxShift; i > 0; --i) {
+        notifications_[i] = notifications_[i - 1];
+    }
+
+    AppNotification& newest = notifications_[0];
+    newest.uid = uid;
+    newest.timestampEpoch = millis() / 1000;
+    strncpy(newest.title, title ? title : "Notification", sizeof(newest.title) - 1);
+    newest.title[sizeof(newest.title) - 1] = '\0';
+    strncpy(newest.message, message ? message : "", sizeof(newest.message) - 1);
+    newest.message[sizeof(newest.message) - 1] = '\0';
+    strncpy(newest.app, app ? app : "", sizeof(newest.app) - 1);
+    newest.app[sizeof(newest.app) - 1] = '\0';
+
+    if (notifCount_ < MAX_NOTIFS) {
+        notifCount_++;
+    }
+}
+
+void BluetoothManager::clearNotifications() {
+    notifCount_ = 0;
+}
+
+void BluetoothManager::onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, void* user) {
+    auto* self = static_cast<BluetoothManager*>(user);
+    if (!self) return;
+
+    self->addNotification(title, message, app, uid);
+
+    events::Event evt = events::Event::createNotification(title, message, app, uid, millis());
     self->bus_.publish(evt);
 }
 

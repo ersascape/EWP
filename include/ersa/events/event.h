@@ -85,6 +85,13 @@ struct MediaPayload {
     bool playing;
 };
 
+struct NotificationPayload {
+    char title[32];
+    char message[64];
+    char app[20];
+    uint32_t uid;
+};
+
 struct Event {
     EventType type{EventType::None};
     uint32_t timestampMs{0};
@@ -96,6 +103,7 @@ struct Event {
         NetworkPayload network;
         CallPayload call;
         MediaPayload media;
+        NotificationPayload notification;
         void* customPayload;
     };
 
@@ -163,6 +171,33 @@ struct Event {
             for (size_t i = 0; i < sizeof(e.media.artist) - 1 && artist[i]; ++i) {
                 e.media.artist[i] = artist[i];
                 e.media.artist[i + 1] = '\0';
+            }
+        }
+        return e;
+    }
+
+    static Event createNotification(const char* title, const char* message, const char* app = "", uint32_t uid = 0, uint32_t ts = 0) {
+        Event e(EventType::NotificationReceived, ts);
+        e.notification.uid = uid;
+        e.notification.title[0] = '\0';
+        e.notification.message[0] = '\0';
+        e.notification.app[0] = '\0';
+        if (title) {
+            for (size_t i = 0; i < sizeof(e.notification.title) - 1 && title[i]; ++i) {
+                e.notification.title[i] = title[i];
+                e.notification.title[i + 1] = '\0';
+            }
+        }
+        if (message) {
+            for (size_t i = 0; i < sizeof(e.notification.message) - 1 && message[i]; ++i) {
+                e.notification.message[i] = message[i];
+                e.notification.message[i + 1] = '\0';
+            }
+        }
+        if (app) {
+            for (size_t i = 0; i < sizeof(e.notification.app) - 1 && app[i]; ++i) {
+                e.notification.app[i] = app[i];
+                e.notification.app[i + 1] = '\0';
             }
         }
         return e;

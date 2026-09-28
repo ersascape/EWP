@@ -153,17 +153,15 @@ void WatchUi::begin() {
         }
     }, &appManager);
 
-    eventBus.subscribe(ersa::events::EventType::BleConnected, [](const ersa::events::Event&, void* user) {
+    // Auto-switch to notification screen on incoming message (unless currently on a call)
+    eventBus.subscribe(ersa::events::EventType::NotificationReceived, [](const ersa::events::Event&, void* user) {
         auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_pairing") == 0) {
-            mgr->markDirty(false);
-        }
-    }, &appManager);
-
-    eventBus.subscribe(ersa::events::EventType::BleDisconnected, [](const ersa::events::Event&, void* user) {
-        auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
-        if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_pairing") == 0) {
-            mgr->markDirty(false);
+        if (mgr && mgr->getActiveApp()) {
+            const char* id = mgr->getActiveApp()->getId();
+            if (strcmp(id, "app_call") != 0) {
+                mgr->switchTo("app_notifications");
+                mgr->markDirty(false);
+            }
         }
     }, &appManager);
 

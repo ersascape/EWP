@@ -27,6 +27,7 @@ enum class BleMediaAction : uint8_t {
 using BleCallCallback = void (*)(BleCallAction action, const char* caller, const char* number, void* userData);
 using BleMediaCallback = void (*)(bool playing, const char* title, const char* artist, void* userData);
 using BleConnectionCallback = void (*)(bool connected, void* userData);
+using BleNotificationCallback = void (*)(const char* title, const char* message, const char* app, uint32_t uid, void* userData);
 
 class IBluetooth {
 public:
@@ -43,6 +44,7 @@ public:
     virtual void setCallCallback(BleCallCallback cb, void* userData) = 0;
     virtual void setMediaCallback(BleMediaCallback cb, void* userData) = 0;
     virtual void setConnectionCallback(BleConnectionCallback cb, void* userData) = 0;
+    virtual void setNotificationCallback(BleNotificationCallback cb, void* userData) = 0;
 
     // Commands sent from watch to phone
     virtual void acceptCall() = 0;

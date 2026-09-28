@@ -13,7 +13,7 @@ const char* const labels[static_cast<size_t>(Item::Count)] = {
     ersa::strings::APP_TITLE_CLOCK,
     ersa::strings::APP_TITLE_NOW_PLAYING,
     ersa::strings::APP_TITLE_CALLS,
-    ersa::strings::APP_TITLE_PAIRING,
+    ersa::strings::APP_TITLE_NOTIFS,
     ersa::strings::APP_TITLE_CALENDAR,
     ersa::strings::APP_TITLE_AGENDA,
     ersa::strings::APP_TITLE_TASKS,

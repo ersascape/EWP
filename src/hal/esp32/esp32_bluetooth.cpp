@@ -219,7 +219,7 @@ Result<void> Esp32Bluetooth::init() {
     BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
     BLEDevice::setSecurityCallbacks(new BleSecCallbacks());
     BLESecurity* pSecurity = new BLESecurity();
-    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+    pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
     pSecurity->setCapability(ESP_IO_CAP_NONE);
     pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
     pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
@@ -296,6 +296,14 @@ void Esp32Bluetooth::setMediaCallback(BleMediaCallback cb, void* userData) {
 void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userData) {
     connCb_ = cb;
     connUserData_ = userData;
+}
+
+void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* userData) {
+    notifCb_ = cb;
+    notifUserData_ = userData;
+    if (pImpl_) {
+        pImpl_->appleClient_.setNotificationCallback(cb, userData);
+    }
 }
 
 void Esp32Bluetooth::acceptCall() {

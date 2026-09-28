@@ -8,7 +8,7 @@
 #include "apps/app_status.h"
 #include "apps/app_now_playing.h"
 #include "apps/app_call.h"
-#include "apps/app_pairing.h"
+#include "apps/app_notifications.h"
 #include "core/buttons.h"
 #include "core/watch_clock.h"
 #include "core/debug_log.h"
@@ -69,8 +69,8 @@ public:
                 case AppDrawer::Item::Calls:
                     ApplicationManager::instance().switchTo("app_call");
                     break;
-                case AppDrawer::Item::Pairing:
-                    ApplicationManager::instance().switchTo("app_pairing");
+                case AppDrawer::Item::Notifications:
+                    ApplicationManager::instance().switchTo("app_notifications");
                     break;
                 case AppDrawer::Item::Hotspot:
                     ApplicationManager::instance().switchTo("app_portal");
@@ -288,15 +288,15 @@ public:
     }
 };
 
-// 9. AppPairing Application
-class PairingApp : public Application {
+// 9. AppNotifications Application
+class NotificationApp : public Application {
 public:
-    const char* getId() const override { return "app_pairing"; }
-    const char* getTitle() const override { return "Pairing"; }
+    const char* getId() const override { return "app_notifications"; }
+    const char* getTitle() const override { return "Notifications"; }
 
     void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
-        if (AppPairing::onButton(legacy)) {
+        if (AppNotifications::onButton(legacy)) {
             ApplicationManager::instance().markDirty(false);
         }
     }
@@ -305,7 +305,7 @@ public:
         (void)fullRefresh;
 #if defined(ARDUINO)
         auto* esp = static_cast<hal::Esp32Display*>(&display);
-        if (esp) AppPairing::render(esp->getGfx());
+        if (esp) AppNotifications::render(esp->getGfx());
 #else
         (void)display;
 #endif
@@ -320,7 +320,7 @@ static PortalApp s_portalApp;
 static StatusApp s_statusApp;
 static MediaApp s_mediaApp;
 static CallApp s_callApp;
-static PairingApp s_pairingApp;
+static NotificationApp s_notifApp;
 
 } // namespace
 
@@ -332,7 +332,7 @@ void registerAllApps(ApplicationManager& manager) {
     AppPortal::begin();
     AppNowPlaying::begin();
     AppCall::begin();
-    AppPairing::begin();
+    AppNotifications::begin();
 
     manager.registerApp(&watchface::AppWatchface::instance());
     manager.registerApp(&s_drawerApp);
@@ -343,7 +343,7 @@ void registerAllApps(ApplicationManager& manager) {
     manager.registerApp(&s_statusApp);
     manager.registerApp(&s_mediaApp);
     manager.registerApp(&s_callApp);
-    manager.registerApp(&s_pairingApp);
+    manager.registerApp(&s_notifApp);
 }
 
 } // namespace app

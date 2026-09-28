@@ -32,6 +32,11 @@ public:
         connUserData_ = userData;
     }
 
+    void setNotificationCallback(hal::BleNotificationCallback cb, void* userData) override {
+        notifCb_ = cb;
+        notifUserData_ = userData;
+    }
+
     void acceptCall() override {
         acceptCount_++;
     }
@@ -75,6 +80,10 @@ public:
         if (mediaCb_) mediaCb_(playing, title, artist, mediaUserData_);
     }
 
+    void simulateNotification(const char* title, const char* message, const char* app = "Messages", uint32_t uid = 1) {
+        if (notifCb_) notifCb_(title, message, app, uid, notifUserData_);
+    }
+
     bool isAdvertising() const { return advertising_; }
     int acceptCount() const { return acceptCount_; }
     int rejectCount() const { return rejectCount_; }
@@ -96,6 +105,9 @@ private:
 
     hal::BleConnectionCallback connCb_{nullptr};
     void* connUserData_{nullptr};
+
+    hal::BleNotificationCallback notifCb_{nullptr};
+    void* notifUserData_{nullptr};
 
     int acceptCount_{0};
     int rejectCount_{0};

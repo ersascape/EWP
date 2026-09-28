@@ -20,6 +20,7 @@ public:
     void setCallCallback(BleCallCallback cb, void* userData) override;
     void setMediaCallback(BleMediaCallback cb, void* userData) override;
     void setConnectionCallback(BleConnectionCallback cb, void* userData) override;
+    void setNotificationCallback(BleNotificationCallback cb, void* userData) override;
 
     void acceptCall() override;
     void rejectCall() override;
@@ -40,6 +41,9 @@ private:
 
     BleConnectionCallback connCb_{nullptr};
     void* connUserData_{nullptr};
+
+    BleNotificationCallback notifCb_{nullptr};
+    void* notifUserData_{nullptr};
 };
 
 } // namespace hal
