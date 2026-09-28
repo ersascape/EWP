@@ -7,8 +7,6 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <BLEHIDDevice.h>
-#include <HIDTypes.h>
 #include "core/debug_log.h"
 
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
@@ -19,21 +17,6 @@
 namespace ersa {
 namespace hal {
 
-class BleSecCallbacks : public BLESecurityCallbacks {
-public:
-    uint32_t onPassKeyRequest() override { return 0; }
-    void onPassKeyNotify(uint32_t pass_key) override { (void)pass_key; }
-    bool onConfirmPIN(uint32_t pass_key) override { (void)pass_key; return true; }
-    bool onSecurityRequest() override { return true; }
-    void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
-        if (cmpl.success) {
-            DebugLog::log("BLE: Pairing & Bonding complete!");
-        } else {
-            DebugLog::log("BLE: Pairing failed reason=0x%x", cmpl.fail_reason);
-        }
-    }
-};
-
 class Esp32Bluetooth::Impl : public BLEServerCallbacks, public BLECharacteristicCallbacks {
 public:
     Esp32Bluetooth* parent_{nullptr};
@@ -42,9 +25,8 @@ public:
     BLECharacteristic* pCallChar_{nullptr};
     BLECharacteristic* pMediaChar_{nullptr};
     BLECharacteristic* pRecentsChar_{nullptr};
-    BLEHIDDevice* pHid_{nullptr};
-    BLECharacteristic* pInputMedia_{nullptr};
     bool connected_{false};
+    bool initialized_{false};
 
     void onConnect(BLEServer* pServer) override {
         (void)pServer;
@@ -145,45 +127,16 @@ Esp32Bluetooth::~Esp32Bluetooth() {
 }
 
 Result<void> Esp32Bluetooth::init() {
+    if (pImpl_->initialized_) {
+        return Result<void>();
+    }
     DebugLog::log("BLE: initializing 'Ersa Wearable' BLE peripheral");
     BLEDevice::init("Ersa Wearable");
 
     pImpl_->pServer_ = BLEDevice::createServer();
     pImpl_->pServer_->setCallbacks(pImpl_);
 
-    // 1. Standard BLE HID Consumer Control (Media Remote for iPhone / Android native control)
-    pImpl_->pHid_ = new BLEHIDDevice(pImpl_->pServer_);
-    pImpl_->pInputMedia_ = pImpl_->pHid_->inputReport(1); // Report ID 1
-    pImpl_->pHid_->manufacturer("Ersa");
-    pImpl_->pHid_->pnp(0x02, 0xe502, 0xa111, 0x0210);
-    pImpl_->pHid_->hidInfo(0x00, 0x01);
-
-    static const uint8_t hidReportMap[] = {
-        0x05, 0x0C, // Usage Page (Consumer)
-        0x09, 0x01, // Usage (Consumer Control)
-        0xA1, 0x01, // Collection (Application)
-        0x85, 0x01, //   Report ID (1)
-        0x15, 0x00, //   Logical Minimum (0)
-        0x25, 0x01, //   Logical Maximum (1)
-        0x75, 0x01, //   Report Size (1)
-        0x95, 0x07, //   Report Count (7)
-        0x09, 0xB5, //   Usage (Scan Next Track)
-        0x09, 0xB6, //   Usage (Scan Previous Track)
-        0x09, 0xCD, //   Usage (Play/Pause)
-        0x09, 0xE9, //   Usage (Volume Increment)
-        0x09, 0xEA, //   Usage (Volume Decrement)
-        0x09, 0xE2, //   Usage (Mute)
-        0x09, 0xB7, //   Usage (Stop)
-        0x81, 0x02, //   Input (Data, Var, Abs)
-        0x75, 0x01, //   Report Size (1)
-        0x95, 0x01, //   Report Count (1)
-        0x81, 0x01, //   Input (Const, Array, Abs) - padding bit
-        0xC0        // End Collection
-    };
-    pImpl_->pHid_->reportMap(const_cast<uint8_t*>(hidReportMap), sizeof(hidReportMap));
-    pImpl_->pHid_->startServices();
-
-    // 2. Custom Ersa Service (0xFFE0) with Call, Media & Recents characteristics
+    // Custom Ersa Service (0xFFE0) with Call, Media & Recents characteristics
     pImpl_->pService_ = pImpl_->pServer_->createService(SERVICE_UUID);
 
     // Call Characteristic
@@ -218,7 +171,7 @@ Result<void> Esp32Bluetooth::init() {
 
     pImpl_->pService_->start();
 
-    // 3. Standard Device Information Service (0x180A)
+    // Standard Device Information Service (0x180A)
     BLEService* pDisService = pImpl_->pServer_->createService(BLEUUID((uint16_t)0x180A));
     BLECharacteristic* pMfrChar = pDisService->createCharacteristic(
         BLEUUID((uint16_t)0x2A29), BLECharacteristic::PROPERTY_READ);
@@ -231,7 +184,7 @@ Result<void> Esp32Bluetooth::init() {
     pFwChar->setValue("1.0.0");
     pDisService->start();
 
-    // 4. Standard Battery Service (0x180F)
+    // Standard Battery Service (0x180F)
     BLEService* pBatService = pImpl_->pServer_->createService(BLEUUID((uint16_t)0x180F));
     BLECharacteristic* pBatLevelChar = pBatService->createCharacteristic(
         BLEUUID((uint16_t)0x2A19),
@@ -241,23 +194,12 @@ Result<void> Esp32Bluetooth::init() {
     pBatLevelChar->setValue(&battPct, 1);
     pBatService->start();
 
-    // 5. BLE Security configuration for native iOS pairing & bonding
-    BLEDevice::setSecurityCallbacks(new BleSecCallbacks());
-    BLESecurity* pSecurity = new BLESecurity();
-    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
-    pSecurity->setCapability(ESP_IO_CAP_NONE);
-    pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-    pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-
+    pImpl_->initialized_ = true;
     return Result<void>();
 }
 
 void Esp32Bluetooth::startAdvertising() {
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->setAppearance(GENERIC_HID);
-    if (pImpl_->pHid_ && pImpl_->pHid_->hidService()) {
-        pAdvertising->addServiceUUID(pImpl_->pHid_->hidService()->getUUID());
-    }
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->addServiceUUID(BLEUUID((uint16_t)0x180F));
     pAdvertising->setScanResponse(true);
@@ -333,11 +275,15 @@ void Esp32Bluetooth::hangupCall() {
 
 void Esp32Bluetooth::dial(const char* number) {
     DebugLog::log("BLE: Command -> DIAL '%s'", number ? number : "");
-    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_ && number) {
+    if (pImpl_ && pImpl_->pCallChar_ && pImpl_->connected_) {
         char buf[32];
         buf[0] = 0x03; // Dial command
-        strncpy(buf + 1, number, sizeof(buf) - 2);
-        buf[sizeof(buf) - 1] = '\0';
+        if (number) {
+            strncpy(buf + 1, number, sizeof(buf) - 2);
+            buf[sizeof(buf) - 1] = '\0';
+        } else {
+            buf[1] = '\0';
+        }
         pImpl_->pCallChar_->setValue(reinterpret_cast<uint8_t*>(buf), strlen(buf + 1) + 1);
         pImpl_->pCallChar_->notify();
     }
@@ -345,33 +291,10 @@ void Esp32Bluetooth::dial(const char* number) {
 
 void Esp32Bluetooth::mediaCommand(BleMediaAction action) {
     DebugLog::log("BLE: Command -> MEDIA ACTION %d", int(action));
-    // 1. Send via custom characteristic if connected to companion app / LightBlue
     if (pImpl_ && pImpl_->pMediaChar_ && pImpl_->connected_) {
         uint8_t val = static_cast<uint8_t>(action);
         pImpl_->pMediaChar_->setValue(&val, 1);
         pImpl_->pMediaChar_->notify();
-    }
-
-    // 2. Also send standard HID Consumer Report to iPhone/Android natively
-    if (pImpl_ && pImpl_->pInputMedia_ && pImpl_->connected_) {
-        uint8_t report = 0;
-        if (action == BleMediaAction::Next) {
-            report = 0x01; // Next Track (bit 0)
-        } else if (action == BleMediaAction::Previous) {
-            report = 0x02; // Previous Track (bit 1)
-        } else if (action == BleMediaAction::Play || action == BleMediaAction::Pause || action == BleMediaAction::Toggle) {
-            report = 0x04; // Play/Pause (bit 2)
-        }
-
-        if (report != 0) {
-            uint8_t press[1] = { report };
-            pImpl_->pInputMedia_->setValue(press, 1);
-            pImpl_->pInputMedia_->notify();
-            delay(15);
-            uint8_t release[1] = { 0x00 };
-            pImpl_->pInputMedia_->setValue(release, 1);
-            pImpl_->pInputMedia_->notify();
-        }
     }
 }
 
