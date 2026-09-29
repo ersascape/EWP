@@ -2,9 +2,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PKGVER="${GITHUB_REF_NAME#ewp-}"
-if [[ "$PKGVER" == "$GITHUB_REF_NAME" || ! "$PKGVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Expected GITHUB_REF_NAME like ewp-0.1.2; got '${GITHUB_REF_NAME:-unset}'" >&2
+REF_NAME="${GITHUB_REF_NAME:-}"
+if [[ "$REF_NAME" =~ ^ewp-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  PKGVER="${BASH_REMATCH[1]}"
+else
+  PKGVER="$(sed -n 's/^pkgver=//p' "$ROOT/packaging/arch/ewctl/PKGBUILD" | head -n 1)"
+fi
+if [[ ! "$PKGVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Expected an ewp-X.Y.Z ref or valid pkgver in PKGBUILD; got '${REF_NAME:-unset}' / '$PKGVER'" >&2
   exit 2
 fi
 
