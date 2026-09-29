@@ -4,6 +4,7 @@
 #include "debug_log.h"
 #include "ersa/config/system_defaults.h"
 #include "ersa/config/ui_strings.h"
+#include "ersa/services/time_service.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -629,11 +630,13 @@ bool syncNtp() {
     bool success = fetchTimeWithFallbacks(utcEpoch, isHttpFallback);
     if (success) {
         const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
-        WatchClock::setEpoch(localEpoch);
+        const bool applied = ersa::services::TimeService::instance().submitTime(
+            ersa::events::TimeSource::Network, localEpoch);
         safeCopy(statusMsg, isHttpFallback ? ersa::strings::MSG_HTTP_TIME_SYNCED : ersa::strings::MSG_NTP_SYNCED, sizeof(statusMsg));
         DebugLog::log("NET: Time sync SUCCESS (method=%s, utc=%lu, local=%lu, tzOffset=%d min)",
                       isHttpFallback ? "HTTP" : "SNTP",
                       (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
+        if (!applied) DebugLog::log("NET: network time ignored; higher-priority source already set the clock");
     } else {
         safeCopy(statusMsg, ersa::strings::MSG_TIME_SYNC_FAILED, sizeof(statusMsg));
         DebugLog::log("NET: Time sync failed");
@@ -658,10 +661,12 @@ bool syncAll() {
     bool isHttpFallback = false;
     if (fetchTimeWithFallbacks(utcEpoch, isHttpFallback)) {
         const uint32_t localEpoch = static_cast<uint32_t>((int64_t)utcEpoch + ((int64_t)cfg.timezoneOffsetMin * 60));
-        WatchClock::setEpoch(localEpoch);
+        const bool applied = ersa::services::TimeService::instance().submitTime(
+            ersa::events::TimeSource::Network, localEpoch);
         DebugLog::log("NET: Time synced (method=%s, utc=%lu, local=%lu, tzOffset=%d min)",
                       isHttpFallback ? "HTTP" : "SNTP",
                       (unsigned long)utcEpoch, (unsigned long)localEpoch, cfg.timezoneOffsetMin);
+        if (!applied) DebugLog::log("NET: network time ignored; higher-priority source already set the clock");
     } else {
         DebugLog::log("NET: Time sync failed in syncAll; keeping RTC time");
     }

@@ -20,6 +20,7 @@ enum class EventType : uint16_t {
 
     MinuteTick,
     SecondTick,
+    TimeSync,
 
     BatteryChanged,
     BatteryLow,
@@ -50,6 +51,13 @@ enum class ButtonId : uint8_t {
     Button2  // Bottom button (S1 on Ampere Works T1E)
 };
 
+enum class TimeSource : uint8_t {
+    Unknown = 0,
+    Network,
+    BleCurrentTime,
+    Manual
+};
+
 struct ButtonPayload {
     ButtonId button{ButtonId::Unknown};
 };
@@ -62,6 +70,7 @@ struct TimePayload {
     uint8_t hour{0};
     uint8_t minute{0};
     uint8_t second{0};
+    TimeSource source{TimeSource::Unknown};
 };
 
 struct BatteryPayload {
@@ -127,6 +136,13 @@ struct Event {
     static Event createMinuteTick(const TimePayload& tp, uint32_t ts = 0) {
         Event e(EventType::MinuteTick, ts);
         e.time = tp;
+        return e;
+    }
+
+    static Event createTimeSync(uint32_t epoch, TimeSource source, uint32_t ts = 0) {
+        Event e(EventType::TimeSync, ts);
+        e.time.epoch = epoch;
+        e.time.source = source;
         return e;
     }
 

@@ -20,7 +20,37 @@ Result<void> TimeService::init() {
     Result<void> res = rtc_.init();
     hal::TimePoint current = rtc_.now();
     lastMinute_ = current.epoch / 60;
+    if (!timeSyncSubscription_) {
+        timeSyncSubscription_ = bus_.subscribe(events::EventType::TimeSync, onTimeSyncEvent, this);
+    }
     return res;
+}
+
+void TimeService::onTimeSyncEvent(const events::Event& event, void* userData) {
+    auto* self = static_cast<TimeService*>(userData);
+    if (self && event.type == events::EventType::TimeSync)
+        self->submitTime(event.time.source, event.time.epoch);
+}
+
+bool TimeService::submitTime(events::TimeSource source, uint32_t epochSeconds) {
+    // The watch clock/DS3231 is intentionally constrained to valid dates
+    // supported by the installed RTC and current firmware.
+    if (epochSeconds < 1704067200UL || epochSeconds >= 4102444800UL) return false;
+    const auto priority = [](events::TimeSource candidate) -> uint8_t {
+        switch (candidate) {
+            case events::TimeSource::Manual: return 3;
+            case events::TimeSource::BleCurrentTime: return 2;
+            case events::TimeSource::Network: return 1;
+            default: return 0;
+        }
+    };
+    if (priority(source) == 0 || priority(source) < priority(selectedSource_)) return false;
+    Result<void> result = rtc_.setEpoch(epochSeconds);
+    if (!result.isOk()) return false;
+    const hal::TimePoint tp = rtc_.now();
+    lastMinute_ = tp.epoch / 60;
+    selectedSource_ = source;
+    return true;
 }
 
 void TimeService::tick(uint32_t currentUptimeMs) {
@@ -52,20 +82,18 @@ hal::TimePoint TimeService::now() {
 }
 
 Result<void> TimeService::setEpoch(uint32_t epochSeconds) {
-    Result<void> res = rtc_.setEpoch(epochSeconds);
-    if (res.isOk()) {
-        hal::TimePoint tp = rtc_.now();
-        lastMinute_ = tp.epoch / 60;
-    }
-    return res;
+    if (submitTime(events::TimeSource::Manual, epochSeconds)) return Result<void>();
+    return Result<void>(ErrorCode::InvalidParam, "invalid or rejected time source value");
 }
 
 Result<void> TimeService::adjust(const hal::TimePoint& time) {
-    Result<void> res = rtc_.adjust(time);
-    if (res.isOk()) {
-        lastMinute_ = time.epoch / 60;
-    }
-    return res;
+    if (time.epoch) return setEpoch(time.epoch);
+    Result<void> result = rtc_.adjust(time);
+    if (!result.isOk()) return result;
+    const hal::TimePoint adjusted = rtc_.now();
+    lastMinute_ = adjusted.epoch / 60;
+    selectedSource_ = events::TimeSource::Manual;
+    return Result<void>();
 }
 
 bool TimeService::isRtcHealthy() const {

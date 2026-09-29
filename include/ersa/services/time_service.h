@@ -17,6 +17,7 @@ public:
 
     hal::TimePoint now();
     Result<void> setEpoch(uint32_t epochSeconds);
+    bool submitTime(events::TimeSource source, uint32_t epochSeconds);
     Result<void> adjust(const hal::TimePoint& time);
 
     bool isRtcHealthy() const;
@@ -34,6 +35,9 @@ private:
     int16_t tzOffsetMin_{0};
     uint32_t lastMinute_{UINT32_MAX};
     uint32_t lastPollMs_{0};
+    events::TimeSource selectedSource_{events::TimeSource::Unknown};
+    events::SubscriptionId timeSyncSubscription_{0};
+    static void onTimeSyncEvent(const events::Event& event, void* userData);
 };
 
 } // namespace services
