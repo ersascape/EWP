@@ -13,7 +13,9 @@
 
 namespace {
 constexpr size_t REQUEST_LIMIT = 512;
-constexpr size_t RESPONSE_LIMIT = 512;
+// Four diagnostic records can exceed the request-sized frame limit. Keep the
+// response large enough for a complete batch so sendReply never drops logs.
+constexpr size_t RESPONSE_LIMIT = 2048;
 char requestBuffer[REQUEST_LIMIT + 1];
 size_t requestLength = 0;
 bool droppingLongRequest = false;
@@ -193,7 +195,13 @@ void sendReply(uint32_t id, bool ok, const char* code, const char* message, cons
                          static_cast<unsigned long>(id), data ? data : "{}");
     else n = snprintf(responseBuffer, sizeof(responseBuffer), "{\"v\":1,\"id\":%lu,\"ok\":false,\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}\n",
                       static_cast<unsigned long>(id), code ? code : "error", message ? message : "request failed");
-    if (n <= 0 || size_t(n) >= sizeof(responseBuffer)) return;
+    if (n <= 0) return;
+    if (size_t(n) >= sizeof(responseBuffer)) {
+        n = snprintf(responseBuffer, sizeof(responseBuffer),
+                     "{\"v\":1,\"id\":%lu,\"ok\":false,\"error\":{\"code\":\"response_too_large\",\"message\":\"reply exceeded the USB frame limit\"}}\n",
+                     static_cast<unsigned long>(id));
+        if (n <= 0 || size_t(n) >= sizeof(responseBuffer)) return;
+    }
     responseLength = size_t(n);
     responseOffset = 0;
 }
@@ -306,10 +314,9 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
                 size_t(prefixLength) + 60 >= sizeof(data) - pos) break;
             memcpy(data + pos, prefix, size_t(prefixLength));
             pos += size_t(prefixLength);
-            // Reserve room for the closing object/array and cursor field. A
-            // long log line is truncated at a UTF-8 byte boundary only if it
-            // contains printable ASCII; diagnostics currently are ASCII.
-            const size_t reserve = 56;
+            // Reserve room for the closing object/array, cursor field, and
+            // outer NDJSON envelope. Long lines are safely truncated here.
+            const size_t reserve = 160;
             if (sizeof(data) - pos <= reserve + 3) break;
             const size_t written = appendEscaped(data + pos, sizeof(data) - pos - reserve, 0, records[i].text);
             if (!written) break;

@@ -29,7 +29,7 @@ The USB transport uses the existing Arduino `Serial` USB Serial/JTAG console. Th
 
 ## Wire protocol
 
-Use newline-delimited JSON (NDJSON) initially. It is easy to inspect with a terminal while remaining straightforward to parse in a host script. Set a strict maximum request and response size (initial proposal: 512 bytes each), reject overlong or malformed frames, and discard input through the next newline after a framing error. Never allocate from an untrusted length field.
+Use newline-delimited JSON (NDJSON) initially. It is easy to inspect with a terminal while remaining straightforward to parse in a host script. Requests are limited to 512 bytes; replies are limited to 2048 bytes so a bounded batch of diagnostic lines fits. Reject overlong or malformed requests and discard input through the next newline after a framing error. Never allocate from an untrusted length field.
 
 Each request includes a protocol version, request ID, command, and optional arguments:
 

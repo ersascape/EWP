@@ -23,6 +23,11 @@ docker run --rm \
     runuser -u builder -- bash -euc "cd /tmp/ewctl-pkgbuild && makepkg --cleanbuild --noconfirm"
     cp /tmp/ewctl-pkgbuild/*.pkg.tar.zst /workspace/.pio/release/
     repo-add /workspace/.pio/release/ewctl.db.tar.gz /workspace/.pio/release/ewctl-*.pkg.tar.zst
-    cp -L /workspace/.pio/release/ewctl.db.tar.gz /workspace/.pio/release/ewctl.db
-    cp -L /workspace/.pio/release/ewctl.files.tar.gz /workspace/.pio/release/ewctl.files
+    # repo-add creates .db/.files aliases to the .tar.gz archives. Copy via
+    # distinct temporary files before replacing those aliases with regular
+    # files; direct cp follows the aliases and reports source == destination.
+    cp -L /workspace/.pio/release/ewctl.db.tar.gz /tmp/ewctl.db
+    mv -f /tmp/ewctl.db /workspace/.pio/release/ewctl.db
+    cp -L /workspace/.pio/release/ewctl.files.tar.gz /tmp/ewctl.files
+    mv -f /tmp/ewctl.files /workspace/.pio/release/ewctl.files
   '
