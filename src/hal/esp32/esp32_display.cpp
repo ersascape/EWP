@@ -17,6 +17,8 @@ Esp32Display::Esp32Display(int cs, int dc, int rst, int busy, int sck, int miso,
 
 void Esp32Display::staticBusyCallback(const void* p) {
     (void)p;
+    // The display driver blocks here during e-paper waveforms. Keep the
+    // polled debouncers serviced so taps during refreshes are not lost.
     Buttons::tick();
     if (s_instance && s_instance->busyCb_) {
         s_instance->busyCb_(s_instance->busyUserData_);
@@ -62,15 +64,24 @@ void Esp32Display::refresh(bool full) {
         display_.setFullWindow();
         display_.display(false); // Full refresh with clearing waveform
     } else {
-        display_.display(true);  // Fast partial refresh of full screen (differential, no flash)
+        display_.display(true);  // Fast differential partial refresh
+        display_.powerOff();     // Release panel driving voltage; preserve the image
     }
-    powered_ = true;
+    powered_ = false;
 }
 
 void Esp32Display::refreshRect(const Rect& rect) {
-    (void)rect;
-    display_.display(true);
-    powered_ = true;
+    const int16_t x = rect.x < 0 ? 0 : rect.x;
+    const int16_t y = rect.y < 0 ? 0 : rect.y;
+    const int16_t right = (rect.x + rect.w > width()) ? width() : rect.x + rect.w;
+    const int16_t bottom = (rect.y + rect.h > height()) ? height() : rect.y + rect.h;
+    if (right <= x || bottom <= y) return;
+    display_.setFullWindow();
+    display_.displayWindow(uint16_t(x), uint16_t(y), uint16_t(right - x), uint16_t(bottom - y));
+    // GxEPD2 leaves the panel drive supply on after partial updates. Shut it
+    // down so the image does not fade while the MCU is idle.
+    display_.powerOff();
+    powered_ = false;
 }
 
 bool Esp32Display::isBusy() const {

@@ -2,6 +2,7 @@
 
 #include "hal/esp32/esp32_input.h"
 #include "core/buttons.h"
+#include "core/debug_log.h"
 #include <Arduino.h>
 
 namespace ersa {
@@ -53,6 +54,7 @@ void Esp32Input::poll() {
     }
 
     events::Event evt = events::Event::createButton(type, btn, millis());
+    DebugLog::log("INPUT: routing button=%u event=%u", unsigned(btn), unsigned(type));
     bus_.post(evt);
 }
 

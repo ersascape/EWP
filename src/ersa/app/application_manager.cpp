@@ -79,7 +79,6 @@ Application* ApplicationManager::getApp(size_t index) const {
 bool ApplicationManager::handleEvent(const events::Event& event) {
     if (!activeApp_) return false;
     activeApp_->onEvent(event);
-    markDirty(false);
     return true;
 }
 

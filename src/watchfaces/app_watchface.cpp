@@ -32,6 +32,7 @@ void AppWatchface::onExit() {
 void AppWatchface::onEvent(const events::Event& event) {
     if (event.type == events::EventType::ButtonClicked) {
         if (event.button.button == events::ButtonId::Button1) {
+            DebugLog::log("NAV: watchface top-button click -> app drawer");
             app::ApplicationManager::instance().switchTo("app_drawer");
         } else if (event.button.button == events::ButtonId::Button2) {
             NetSync::syncAll();
@@ -50,12 +51,6 @@ void AppWatchface::onEvent(const events::Event& event) {
         } else if (event.button.button == events::ButtonId::Button2) {
             app::ApplicationManager::instance().switchTo("app_drawer");
         }
-    } else if (event.type == events::EventType::BatteryChanged) {
-        app::ApplicationManager::instance().markDirty(true);
-    } else if (event.type == events::EventType::MinuteTick) {
-        DateTime time = WatchClock::now();
-        bool needFull = (shownDay_ != 0 && time.day() != shownDay_);
-        app::ApplicationManager::instance().markDirty(needFull);
     }
 }
 

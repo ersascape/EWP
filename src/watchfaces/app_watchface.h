@@ -19,7 +19,9 @@ public:
     void onEvent(const events::Event& event) override;
     void render(hal::IDisplay& display, bool fullRefresh) override;
 
-    Rect getPartialBounds() const override { return Rect{0, 0, 200, 200}; }
+    // Clock/media/call content changes above the fixed weekday/date footer.
+    // Midnight already forces a full refresh in WatchUi.
+    Rect getPartialBounds() const override { return Rect{0, 0, 200, 160}; }
 
     static AppWatchface& instance();
 

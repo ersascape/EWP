@@ -49,7 +49,6 @@ BoardAmpereT1e::BoardAmpereT1e()
 Result<void> BoardAmpereT1e::init() {
     Board::setCurrent(this);
     input_.init();
-    battery_.init();
     rtc_.init();
     display_.init();
     bluetooth_.init();

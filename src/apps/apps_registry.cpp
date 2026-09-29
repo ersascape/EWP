@@ -40,6 +40,7 @@ class DrawerApp : public Application {
 public:
     const char* getId() const override { return "app_drawer"; }
     const char* getTitle() const override { return "App Drawer"; }
+    Rect getPartialBounds() const override { return Rect{0, 24, 200, 152}; }
 
     void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
