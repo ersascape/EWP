@@ -2,6 +2,7 @@
 
 #include "ersa/hal/bluetooth.h"
 #include "ersa/hal/companion_source.h"
+#include <atomic>
 
 namespace ersa {
 namespace hal {
@@ -17,6 +18,8 @@ public:
     Result<void> init() override;
     void startAdvertising() override;
     void stopAdvertising() override;
+    bool suspendForMaintenance() override;
+    void resumeAfterMaintenance() override;
     bool isConnected() const override;
     bool isAdvertising() const override;
     uint32_t nextWakeDelayMs(uint32_t nowMs) const override;
@@ -56,9 +59,13 @@ private:
 
     CompanionNotificationCallback notifCb_{nullptr};
     void* notifUserData_{nullptr};
+    CompanionTimeCallback timeCb_{nullptr};
+    void* timeUserData_{nullptr};
     CompanionAvailabilityCallback availabilityCb_{nullptr};
     void* availabilityUserData_{nullptr};
     bool lastSourceAvailability_{false};
+    bool maintenanceSuspended_{false};
+    std::atomic<uint32_t> tickUsers_{0};
 };
 
 } // namespace hal

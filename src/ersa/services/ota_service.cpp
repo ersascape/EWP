@@ -1,5 +1,4 @@
 #include "ersa/services/ota_service.h"
-#include "ersa/services/ota_root_ca.h"
 
 #include "core/debug_log.h"
 #include "core/watch_config.h"
@@ -12,6 +11,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_http_client.h>
+#include <esp_crt_bundle.h>
 #include <mbedtls/sha256.h>
 #include <cstring>
 #include <ctime>
@@ -80,7 +80,9 @@ bool fetchManifest(OtaManifest& manifest) {
     config.url = manifestUrl;
     config.timeout_ms = 15000;
     config.buffer_size = 512;
-    config.cert_pem = kErsaOtaRootCa;
+    // Use IDF's flash-resident certificate bundle. Parsing a 4 KB RSA root
+    // certificate into heap here can fail while BLE and Wi-Fi coexist.
+    config.crt_bundle_attach = esp_crt_bundle_attach;
     config.event_handler = collectManifest;
     config.user_data = &body;
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -298,6 +300,20 @@ void OtaService::updateTask(void* context) {
 }
 
 void OtaService::runUpdate(bool install) {
+    auto& bluetooth = board::Board::current().getBluetooth();
+    if (!bluetooth.suspendForMaintenance()) {
+        updateState_.store(UpdateState::Failed);
+        DebugLog::log("OTA: cannot suspend BLE for maintenance");
+        return;
+    }
+    struct ResumeBluetooth {
+        hal::IBluetooth& bluetooth;
+        ~ResumeBluetooth() { bluetooth.resumeAfterMaintenance(); }
+    } resumeBluetooth{bluetooth};
+
+    DebugLog::log("OTA: BLE suspended; heap=%u largest=%u",
+                  unsigned(ESP.getFreeHeap()),
+                  unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 20 * 1024 ||
         ESP.getFreeHeap() < 45000) {
         updateState_.store(UpdateState::Failed);
@@ -339,7 +355,7 @@ void OtaService::runUpdate(bool install) {
     httpConfig.timeout_ms = 20000;
     httpConfig.buffer_size = 1024;
     httpConfig.buffer_size_tx = 512;
-    httpConfig.cert_pem = kErsaOtaRootCa;
+    httpConfig.crt_bundle_attach = esp_crt_bundle_attach;
     esp_https_ota_config_t otaConfig{};
     otaConfig.http_config = &httpConfig;
     otaConfig.partial_http_download = true;

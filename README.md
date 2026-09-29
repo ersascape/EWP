@@ -257,8 +257,8 @@ artifact. To publish downloadable firmware under **GitHub Releases**, push an
 project history is in [CHANGELOG.md](CHANGELOG.md):
 
 ```bash
-git tag ewp-0.1.3
-git push origin ewp-0.1.3
+git tag ewp-0.1.4
+git push origin ewp-0.1.4
 ```
 
 Each tagged release includes `firmware.bin`, `ewp-factory.bin`, migration

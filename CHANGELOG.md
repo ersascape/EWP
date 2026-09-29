@@ -1,5 +1,16 @@
 # Changelog
 
+## ewp-0.1.4
+
+- Suspend and tear down the BLE service during OTA checks and installs, then
+  restore advertising when an operation exits without rebooting.
+- Make OTA explicitly disconnect an active phone link before radio teardown,
+  with a GATT-close fallback and diagnostic status logging.
+- Use ESP-IDF's certificate bundle for OTA HTTPS validation to reduce TLS heap
+  pressure.
+
+See [release notes](release-notes/ewp-0.1.4.md) for details.
+
 ## ewp-0.1.3
 
 - Added rollback-capable A/B slots, a one-time OTA partition migration, and the

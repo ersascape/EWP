@@ -15,6 +15,11 @@ public:
     virtual Result<void> init() = 0;
     virtual void startAdvertising() = 0;
     virtual void stopAdvertising() = 0;
+    // Suspend the radio stack for memory intensive maintenance such as OTA.
+    // The link is dropped. Implementations without a suspendable radio may
+    // keep their existing behavior and return true.
+    virtual bool suspendForMaintenance() { stopAdvertising(); return true; }
+    virtual void resumeAfterMaintenance() { startAdvertising(); }
     virtual bool isConnected() const = 0;
     virtual bool isAdvertising() const { return false; }
     // Milliseconds until radio maintenance must run, or UINT32_MAX if none.

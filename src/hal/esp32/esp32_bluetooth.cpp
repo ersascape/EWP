@@ -55,6 +55,7 @@ public:
     std::atomic<bool> advertising_{false}, advertisingPending_{false};
     std::atomic<bool> slowAdvertising_{false}, slowRestartPending_{false};
     std::atomic<bool> companionCalls_{false}, companionMedia_{false};
+    uint16_t connectionId_{0};
     bool initialized_{false};
     std::atomic<uint32_t> advertiseAfterMs_{0};
     std::atomic<uint32_t> advertisingStartedAtMs_{0};
@@ -92,6 +93,7 @@ public:
     void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override {
         (void)pServer;
         connected_ = true;
+        if (param) connectionId_ = param->connect.conn_id;
         advertising_ = false;
         advertisingPending_ = false;
         slowRestartPending_ = false;
@@ -113,13 +115,14 @@ public:
         (void)pServer;
         connected_ = false;
         advertising_ = false;
-        advertisingPending_ = true;
+        advertisingPending_ = !(parent_ && parent_->maintenanceSuspended_);
         slowAdvertising_ = false;
         slowRestartPending_ = false;
         advertiseAfterMs_ = millis() + 750;
         companionCalls_ = false; companionMedia_ = false;
         appleClient_.stop();
-        DebugLog::log("BLE: Central disconnected reason=0x%02x; restarting advertising", param ? unsigned(param->disconnect.reason) : 0);
+        DebugLog::log("BLE: Central disconnected reason=0x%02x%s", param ? unsigned(param->disconnect.reason) : 0,
+                      (parent_ && parent_->maintenanceSuspended_) ? "; maintenance suspend" : "; restarting advertising");
         if (parent_ && parent_->connCb_) {
             parent_->connCb_(false, parent_->connUserData_);
         }
@@ -210,6 +213,11 @@ Esp32Bluetooth::~Esp32Bluetooth() {
 }
 
 Result<void> Esp32Bluetooth::init() {
+    if (!pImpl_) {
+        pImpl_ = new (std::nothrow) Impl();
+        if (!pImpl_) return Result<void>(ErrorCode::OutOfMemory, "BLE driver state");
+        pImpl_->parent_ = this;
+    }
     if (pImpl_->initialized_) {
         return Result<void>();
     }
@@ -223,6 +231,10 @@ Result<void> Esp32Bluetooth::init() {
 
     pImpl_->pServer_ = BLEDevice::createServer();
     pImpl_->pServer_->setCallbacks(pImpl_);
+    pImpl_->appleClient_.setCallCallback(callCb_, callUserData_);
+    pImpl_->appleClient_.setMediaCallback(mediaCb_, mediaUserData_);
+    pImpl_->appleClient_.setNotificationCallback(notifCb_, notifUserData_);
+    pImpl_->appleClient_.setTimeCallback(timeCb_, timeUserData_);
 
     // Custom Ersa Service (0xFFE0) with Call, Media & Recents characteristics
     pImpl_->pService_ = pImpl_->pServer_->createService(SERVICE_UUID);
@@ -299,6 +311,7 @@ Result<void> Esp32Bluetooth::init() {
 }
 
 void Esp32Bluetooth::startAdvertising() {
+    if (!pImpl_ || maintenanceSuspended_) return;
     if (!pImpl_->initialized_ || pImpl_->connected_) return;
     pImpl_->advertising_ = false;
     pImpl_->slowAdvertising_ = false;
@@ -309,6 +322,13 @@ void Esp32Bluetooth::startAdvertising() {
 }
 
 void Esp32Bluetooth::tick() {
+    if (maintenanceSuspended_ || !pImpl_) return;
+    tickUsers_.fetch_add(1, std::memory_order_acq_rel);
+    if (maintenanceSuspended_ || !pImpl_) {
+        tickUsers_.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+    struct TickExit { std::atomic<uint32_t>& users; ~TickExit() { users.fetch_sub(1, std::memory_order_release); } } tickExit{tickUsers_};
     if (!pImpl_->initialized_) return;
     const bool sourceAvailable = isAvailable();
     if (sourceAvailable != lastSourceAvailability_) {
@@ -336,7 +356,7 @@ void Esp32Bluetooth::tick() {
 }
 
 void Esp32Bluetooth::beginAdvertising() {
-    if (pImpl_->connected_) return;
+    if (!pImpl_ || maintenanceSuspended_ || pImpl_->connected_) return;
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
 
     // Primary Advertisement Data: Flags + ANCS 128-bit Service Solicitation (21 bytes <= 31 max)
@@ -370,16 +390,86 @@ void Esp32Bluetooth::beginAdvertising() {
 }
 
 void Esp32Bluetooth::stopAdvertising() {
+    if (!pImpl_ || maintenanceSuspended_) return;
     pImpl_->advertisingPending_ = false;
     pImpl_->advertising_ = false;
     pImpl_->slowRestartPending_ = false;
     BLEDevice::stopAdvertising();
 }
 
-bool Esp32Bluetooth::isAdvertising() const { return pImpl_->advertising_; }
+bool Esp32Bluetooth::suspendForMaintenance() {
+    if (maintenanceSuspended_) return true;
+    maintenanceSuspended_ = true;
+    if (!pImpl_) return true;
+    pImpl_->advertisingPending_ = false;
+    pImpl_->slowRestartPending_ = false;
+    BLEDevice::stopAdvertising();
+    const uint32_t waitStarted = millis();
+    while (tickUsers_.load(std::memory_order_acquire) != 0 &&
+           uint32_t(millis() - waitStarted) < 1000) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (tickUsers_.load(std::memory_order_acquire) != 0) {
+        maintenanceSuspended_ = false;
+        startAdvertising();
+        DebugLog::log("BLE: maintenance suspend failed; driver tick still active");
+        return false;
+    }
+    if (pImpl_->connected_ && pImpl_->pServer_) {
+        // GAP disconnect explicitly terminates the radio link. The Arduino
+        // wrapper's BLEServer::disconnect only calls gatts_close and hides
+        // its return status; some central connections remain up after that.
+        esp_err_t disconnectResult = esp_ble_gap_disconnect(pImpl_->peer_);
+        DebugLog::log("BLE: OTA disconnect requested via GAP status=0x%x",
+                      unsigned(disconnectResult));
+        uint32_t disconnectStarted = millis();
+        while (pImpl_->connected_ && uint32_t(millis() - disconnectStarted) < 3000) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        if (pImpl_->connected_) {
+            pImpl_->pServer_->disconnect(pImpl_->connectionId_);
+            DebugLog::log("BLE: OTA disconnect fallback via GATT close conn=%u",
+                          unsigned(pImpl_->connectionId_));
+            disconnectStarted = millis();
+            while (pImpl_->connected_ && uint32_t(millis() - disconnectStarted) < 2000) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+        }
+        if (pImpl_->connected_) {
+            maintenanceSuspended_ = false;
+            startAdvertising();
+            DebugLog::log("BLE: maintenance suspend failed; central did not disconnect");
+            return false;
+        }
+    }
+    Impl* old = pImpl_;
+    if (Impl::current() == old) Impl::current() = nullptr;
+    pImpl_ = nullptr;
+    delete old; // Stops and joins the Apple GATT worker; releases its queues.
+    // Keep controller memory reserved: this Arduino BLE version does not clear
+    // its initialized flag when release_memory=true, which prevents re-init.
+    BLEDevice::deinit(false);
+    DebugLog::log("BLE: fully suspended for OTA maintenance");
+    return true;
+}
+
+void Esp32Bluetooth::resumeAfterMaintenance() {
+    if (!maintenanceSuspended_) return;
+    maintenanceSuspended_ = false;
+    Result<void> result = init();
+    if (!result.isOk()) {
+        maintenanceSuspended_ = true;
+        DebugLog::log("BLE: resume after maintenance failed");
+        return;
+    }
+    startAdvertising();
+    DebugLog::log("BLE: resumed after OTA maintenance");
+}
+
+bool Esp32Bluetooth::isAdvertising() const { return pImpl_ && pImpl_->advertising_; }
 
 uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t nowMs) const {
-    if (!pImpl_->initialized_ || pImpl_->connected_) return UINT32_MAX;
+    if (!pImpl_ || maintenanceSuspended_ || !pImpl_->initialized_ || pImpl_->connected_) return UINT32_MAX;
     if (pImpl_->slowRestartPending_) return 250;
     if (pImpl_->advertising_) {
         if (pImpl_->slowAdvertising_) return UINT32_MAX;
@@ -460,6 +550,8 @@ void Esp32Bluetooth::setNotificationCallback(CompanionNotificationCallback cb, v
 }
 
 void Esp32Bluetooth::setTimeCallback(CompanionTimeCallback cb, void* userData) {
+    timeCb_ = cb;
+    timeUserData_ = userData;
     if (pImpl_) pImpl_->appleClient_.setTimeCallback(cb, userData);
 }
 
@@ -570,6 +662,8 @@ Esp32Bluetooth::~Esp32Bluetooth() = default;
 Result<void> Esp32Bluetooth::init() { return Result<void>(); }
 void Esp32Bluetooth::startAdvertising() {}
 void Esp32Bluetooth::stopAdvertising() {}
+bool Esp32Bluetooth::suspendForMaintenance() { stopAdvertising(); return true; }
+void Esp32Bluetooth::resumeAfterMaintenance() { startAdvertising(); }
 bool Esp32Bluetooth::isConnected() const { return false; }
 bool Esp32Bluetooth::isAdvertising() const { return false; }
 uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t) const { return UINT32_MAX; }
