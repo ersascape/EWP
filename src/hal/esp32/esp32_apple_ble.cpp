@@ -221,25 +221,6 @@ public:
         } else pending_[pendingCount_++] = {uid, false, false, data[1]};
     }
 
-    void requeueActiveRequest() {
-        if (active_.removed) return;
-        for (size_t i = 0; i < pendingCount_; ++i)
-            if (pending_[i].uid == active_.uid) return;
-        if (pendingCount_ == 16) {
-            size_t drop = pendingCount_;
-            while (drop > 0) {
-                --drop;
-                if (!pending_[drop].call) break;
-            }
-            if (pending_[drop].call) return;
-            for (size_t i = drop + 1; i < pendingCount_; ++i) pending_[i - 1] = pending_[i];
-            --pendingCount_;
-        }
-        for (size_t i = pendingCount_; i > 0; --i) pending_[i] = pending_[i - 1];
-        pending_[0] = active_;
-        ++pendingCount_;
-    }
-
     void requestNext() {
         if (waiting_ || attributesBlocked_ || !control_ || !live()) return;
         while (pendingCount_) {
@@ -257,7 +238,7 @@ public:
                 DebugLog::log("ANCS: notification attribute requests active");
                 requestTraceLogged_ = true;
             }
-            control_->writeValue(cmd, requestNegativeLabel ? 14 : 11, true);
+            control_->writeValue(cmd, requestNegativeLabel ? 12 : 11, true);
             break;
         }
     }
@@ -542,11 +523,26 @@ public:
                 if (dropped) DebugLog::log("ANCS: history burst, skipped %lu records; BLE stays connected", (unsigned long)dropped);
                 const auto other = droppedOther_.exchange(0);
                 if (other) DebugLog::log("BLE-Apple: dropped %lu queued updates", (unsigned long)other);
-                if (overflow_.exchange(false) || (waiting_ && uint32_t(millis() - requestedAt_) > 10000)) {
+                if (overflow_.exchange(false)) {
                     DebugLog::log("ANCS: attribute stream lost uid=%lu; recovering subscriptions, keeping BLE", (unsigned long)active_.uid);
-                    requeueActiveRequest();
-                    waiting_ = false; attributesBlocked_ = true;
+                    // A malformed or dropped fragment makes this response
+                    // unusable. Drop only this UID; retrying it forever can
+                    // block every newer notification behind a stale UID.
+                    active_.removed = true;
+                    waiting_ = false;
+                    attributesBlocked_ = true;
                     recoveryAt_ = millis();
+                }
+                if (waiting_ && uint32_t(millis() - requestedAt_) > 10000) {
+                    // ANCS deliberately sends no Data Source response when a
+                    // requested UID is no longer valid. Do not resubscribe and
+                    // retry that UID at the head of the queue: abandon it and
+                    // allow newer notification requests to proceed.
+                    DebugLog::log("ANCS: attribute timeout uid=%lu; skipping stale request",
+                                  (unsigned long)active_.uid);
+                    active_.removed = true;
+                    waiting_ = false;
+                    attributes_.begin(0, false);
                 }
                 const uint8_t retryExponent = recoveryAttempts_ < 4 ? recoveryAttempts_ : 4;
                 const uint32_t retryDelayMs = 2000UL << retryExponent;

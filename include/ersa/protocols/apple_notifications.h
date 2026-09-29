@@ -52,7 +52,9 @@ public:
         out[5] = 1; out[6] = 31; out[7] = 0;
         out[8] = 3; out[9] = 63; out[10] = 0;
         if (includeNegativeAction) {
-            out[11] = 7; out[12] = 31; out[13] = 0;
+            // Action labels are variable-length attributes without a
+            // requested-length parameter in the ANCS command format.
+            out[11] = 7;
         }
     }
     static void request(uint32_t uid, uint8_t (&out)[11]) {
