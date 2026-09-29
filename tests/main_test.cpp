@@ -15,6 +15,7 @@
 #include "ersa/services/settings_service.h"
 #include "ersa/services/logging_service.h"
 #include "ersa/services/bluetooth_manager.h"
+#include "ersa/services/session_stats.h"
 #include "ersa/system.h"
 #include "mocks/mock_display.h"
 #include "mocks/mock_rtc.h"
@@ -152,12 +153,14 @@ void test_application_manager() {
     TEST_ASSERT(appB.createCount == 1, "App B onCreate called");
     TEST_ASSERT(appB.startCount == 0, "App B not started yet");
     TEST_ASSERT(mgr.getAppCount() == 2, "Two apps registered");
+    mgr.clearDirty();
 
     // 2. Event routing
     events::Event evt = events::Event::createButton(events::EventType::ButtonClicked, events::ButtonId::Button1);
     TEST_ASSERT(mgr.handleEvent(evt), "App handled event");
     TEST_ASSERT(appA.eventCount == 1, "Event reached active App A");
-    TEST_ASSERT(mgr.isDirty(), "App marked dirty after event");
+    TEST_ASSERT(!mgr.isDirty(), "Unrelated event does not force a display redraw");
+    mgr.markDirty(false);
 
     // 3. Render
     mgr.render(display);
@@ -179,7 +182,8 @@ void test_application_manager() {
     TEST_ASSERT(!mgr.isAppSwitched(), "App switch flag cleared after render");
 
     // 6. Test sub-window partial refresh within same app
-    mgr.handleEvent(evt); // marks dirty without app switch
+    mgr.handleEvent(evt);
+    mgr.markDirty(false); // explicit visual invalidation without an app switch
     const uint32_t partialsBefore = display.partialRefreshes_;
     mgr.render(display);
     TEST_ASSERT(display.partialRefreshes_ == partialsBefore + 1, "Partial refresh executed");
@@ -227,6 +231,16 @@ void test_time_service() {
     timeService.setTimezoneOffset(330); // UTC+5:30
     TEST_ASSERT(timeService.getTimezoneOffset() == 330, "Timezone offset set");
 
+    const uint32_t networkTime = 1790685296UL;
+    const uint32_t bleTime = networkTime + 120;
+    const uint32_t laterNetworkTime = networkTime + 300;
+    TEST_ASSERT(timeService.submitTime(events::TimeSource::Network, networkTime), "network time accepted initially");
+    TEST_ASSERT(timeService.submitTime(events::TimeSource::BleCurrentTime, bleTime), "BLE time supersedes network time");
+    TEST_ASSERT(!timeService.submitTime(events::TimeSource::Network, laterNetworkTime), "network time cannot supersede BLE time");
+    TEST_ASSERT(rtc.now().epoch == bleTime, "RTC retains BLE-priority time");
+    TEST_ASSERT(timeService.submitTime(events::TimeSource::Manual, laterNetworkTime), "manual time has highest priority");
+    TEST_ASSERT(!timeService.submitTime(events::TimeSource::BleCurrentTime, bleTime), "BLE cannot supersede manual time");
+
     TEST_PASS();
 }
 
@@ -243,6 +257,19 @@ void test_power_manager() {
     TEST_ASSERT(power.getBatteryPercent() == 60, "Percentage matches");
     TEST_ASSERT(power.isBatteryConnected(), "Battery connected");
     TEST_ASSERT(!power.isCharging(), "Not charging");
+
+    battery.setMv(3300);
+    battery.setPct(2);
+    power.tick(10000);
+    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical voltage requires repeated samples");
+    power.tick(20000);
+    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical voltage remains qualified across samples");
+    power.tick(30000);
+    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Critical, "critical battery is latched after three samples");
+    battery.setMv(3800);
+    battery.setPct(60);
+    power.tick(40000);
+    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical state clears after clear voltage recovery");
 
     // WakeLock RAII tests
     services::PowerManager::setInstance(&power);
@@ -560,6 +587,8 @@ void test_bluetooth_manager() {
 
     // Recents check - top recent should now be Alice
     TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Alice") == 0, "Top recent should be Alice");
+    TEST_ASSERT(services::StorageService::instance().getString("recent_num_0") == "+15551234",
+                "Recent contacts should be persisted for the PBAP-ready recent list");
 
     // 5. Test Accept Call (B1 pressed)
     bleMgr.acceptCall();
@@ -574,7 +603,7 @@ void test_bluetooth_manager() {
     bleMgr.hangupCall();
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Hangup waits for phone confirmation");
     mockBle.simulateCallEnded();
-    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Ended, "Phone confirms ended call");
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Call end returns Calls to its recent list");
     TEST_ASSERT(mockBle.hangupCount() == 1, "HAL hangupCall should be called once");
     TEST_ASSERT(gotCallEnded, "EventBus should receive CallEnded");
 
@@ -585,6 +614,15 @@ void test_bluetooth_manager() {
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Call state should be Active after dial");
 
     bleMgr.hangupCall();
+
+    mockBle.simulateIncomingCall("Name Only", "");
+    TEST_ASSERT(bleMgr.getRecentCallCount() >= 2, "Name-only ANCS caller is kept in recent calls");
+    TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Name Only") == 0, "Name-only caller appears first in recents");
+    TEST_ASSERT(bleMgr.getRecentCall(0).number[0] == '\0', "Name-only caller remains visibly non-dialable");
+    TEST_ASSERT(services::StorageService::instance().getString("recent_name_0") == "Name Only",
+                "Name-only recent caller is persisted");
+    mockBle.simulateCallEnded();
+    TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Name-only call end returns to recents");
 
     // 8. Test Media Control & Updates
     mockBle.simulateMedia(true, "Starboy", "The Weeknd");
@@ -685,6 +723,20 @@ void test_bluetooth_manager() {
     TEST_PASS();
 }
 
+void test_session_stats() {
+    auto& storage = services::StorageService::instance();
+    storage.clear();
+    storage.setInt("sess_chk_s", 125);
+    services::SessionStats::begin();
+    TEST_ASSERT(services::SessionStats::previousSessionUptimeSeconds() == 125,
+                "Last completed uptime loads from the previous checkpoint");
+    services::SessionStats::tick(300000);
+    services::SessionStats::begin();
+    TEST_ASSERT(services::SessionStats::previousSessionUptimeSeconds() == 300,
+                "A later boot reports the latest saved session uptime");
+    TEST_PASS();
+}
+
 // -----------------------------------------------------------------------------
 // Main Test Runner
 // -----------------------------------------------------------------------------
@@ -707,6 +759,7 @@ int main() {
     test_complications();
     test_config_and_fallbacks();
     test_bluetooth_manager();
+    test_session_stats();
 
     printf("\nAll %d test suites passed successfully!\n", testsPassed);
     return 0;
