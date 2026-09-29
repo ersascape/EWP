@@ -68,6 +68,7 @@ PowerManager::PowerManager(hal::IBattery& battery, events::EventBus& bus)
 Result<void> PowerManager::init() {
     Result<void> res = battery_.init();
     battery_.sample();
+    lastBatterySampleMs_ = 0;
     cachedMv_ = battery_.millivolts();
     cachedPercent_ = battery_.percentage();
     cachedConnected_ = battery_.isConnected();
@@ -129,7 +130,7 @@ uint32_t PowerManager::getIdleTimeMs(uint32_t currentUptimeMs) const {
 }
 
 void PowerManager::tick(uint32_t currentUptimeMs) {
-    if (currentUptimeMs - lastBatterySampleMs_ >= BATTERY_SAMPLE_INTERVAL_MS) {
+    if (nextBatterySampleDelayMs(currentUptimeMs) == 0) {
         lastBatterySampleMs_ = currentUptimeMs;
         battery_.sample();
 
@@ -170,6 +171,26 @@ void PowerManager::tick(uint32_t currentUptimeMs) {
             bus_.publish(events::Event::createBatteryChanged(mv, pct, conn, chg, currentUptimeMs));
         }
     }
+}
+
+uint32_t PowerManager::batterySampleIntervalMs() const {
+    // ADC voltage is only a rough state-of-charge estimate. Sample frequently
+    // near low/critical thresholds, but avoid waking the CPU every 10 seconds
+    // when the cell is comfortably charged.
+    if (!cachedConnected_) return 60000;
+    if (batteryPowerLevel_ == BatteryPowerLevel::Critical ||
+        cachedMv_ <= CRITICAL_BATTERY_MV + 150 ||
+        cachedPercent_ <= LOW_BATTERY_PERCENT) return 10000;
+    if (batteryPowerLevel_ == BatteryPowerLevel::Low ||
+        cachedMv_ <= 3800 || cachedPercent_ <= 35) return 20000;
+    if (cachedMv_ >= 3900 && cachedPercent_ >= 70) return 60000;
+    return 30000;
+}
+
+uint32_t PowerManager::nextBatterySampleDelayMs(uint32_t currentUptimeMs) const {
+    const uint32_t interval = batterySampleIntervalMs();
+    const uint32_t elapsed = currentUptimeMs - lastBatterySampleMs_;
+    return elapsed >= interval ? 0 : interval - elapsed;
 }
 
 uint16_t PowerManager::getBatteryMv() const {

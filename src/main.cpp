@@ -2,6 +2,7 @@
 #include "core/watch_clock.h"
 #include "core/watch_config.h"
 #include "core/debug_log.h"
+#include "core/usb_control.h"
 #include "core/dvfs.h"
 #include "ui/watch_ui.h"
 
@@ -40,6 +41,7 @@ void setup() {
 #endif
     DebugLog::log("BOOT starting display");
     WatchUi::begin();
+    UsbControl::begin();
     DebugLog::log("BOOT ready");
 }
 
@@ -47,6 +49,7 @@ void loop() {
     WatchClock::tick();
     Dvfs::tick();
     DebugLog::tick();
+    UsbControl::tick();
     WatchUi::tick();
     delay(5);
 }

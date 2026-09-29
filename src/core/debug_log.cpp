@@ -5,6 +5,7 @@
 #include <esp_system.h>
 #include <stdarg.h>
 #include <Preferences.h>
+#include <string.h>
 
 // Serial must resolve to USB Serial/JTAG, never UART0 on EPD GPIO20/21.
 #if !ARDUINO_USB_CDC_ON_BOOT || !ARDUINO_USB_MODE
@@ -12,6 +13,13 @@
 #endif
 
 namespace {
+constexpr uint32_t HEARTBEAT_INTERVAL_MS = 10000;
+constexpr size_t LOG_RING_CAPACITY = 16;
+DebugLog::Record logRing[LOG_RING_CAPACITY] = {};
+uint32_t nextLogSequence = 1;
+bool protocolMode = false;
+portMUX_TYPE logMux = portMUX_INITIALIZER_UNLOCKED;
+
 // One compact NVS write per boot, never once per heartbeat/refresh. Keep the
 // previous causes so reopening USB (which can itself reset the board) does
 // not erase evidence of the preceding battery reset.
@@ -67,7 +75,6 @@ void DebugLog::begin() {
 }
 
 void DebugLog::log(const char* format, ...) {
-    if (!Serial) return;
     char text[240];
     const int prefix = snprintf(text, sizeof(text), "[%lu] ", (unsigned long)millis());
     va_list args;
@@ -76,15 +83,54 @@ void DebugLog::log(const char* format, ...) {
     va_end(args);
     size_t length = strlen(text);
     text[length++] = '\n';
+    portENTER_CRITICAL(&logMux);
+    Record& record = logRing[(nextLogSequence - 1) % LOG_RING_CAPACITY];
+    record.sequence = nextLogSequence++;
+    memcpy(record.text, text, length);
+    record.text[length] = '\0';
+    const bool machineProtocol = protocolMode;
+    portEXIT_CRITICAL(&logMux);
+    if (!Serial || machineProtocol) return;
     // Drop a line rather than block buttons/display if the host stops reading.
     if (Serial.availableForWrite() >= static_cast<int>(length))
         Serial.write(reinterpret_cast<const uint8_t*>(text), length);
+}
+
+void DebugLog::setProtocolMode(bool enabled) {
+    portENTER_CRITICAL(&logMux);
+    protocolMode = enabled;
+    portEXIT_CRITICAL(&logMux);
+}
+
+size_t DebugLog::readSince(uint32_t cursor, Record* out, size_t capacity, uint32_t* nextCursor) {
+    if (!out || !capacity) return 0;
+    portENTER_CRITICAL(&logMux);
+    const uint32_t latest = nextLogSequence - 1;
+    const uint32_t earliest = latest >= LOG_RING_CAPACITY ? latest - LOG_RING_CAPACITY + 1 : 1;
+    uint32_t first = cursor + 1;
+    if (first < earliest) first = earliest;
+    size_t count = 0;
+    for (uint32_t sequence = first; sequence <= latest && count < capacity; ++sequence) {
+        const Record& record = logRing[(sequence - 1) % LOG_RING_CAPACITY];
+        if (record.sequence == sequence) out[count++] = record;
+    }
+    if (nextCursor) *nextCursor = count ? out[count - 1].sequence : cursor;
+    portEXIT_CRITICAL(&logMux);
+    return count;
+}
+
+uint32_t DebugLog::latestSequence() {
+    portENTER_CRITICAL(&logMux);
+    const uint32_t latest = nextLogSequence - 1;
+    portEXIT_CRITICAL(&logMux);
+    return latest;
 }
 
 void DebugLog::tick() {
     static bool attached = false;
     static uint32_t lastReport = 0;
     const bool connected = bool(Serial);
+    if (!connected) setProtocolMode(false);
     if (connected && !attached) {
         log("ErsaWearable boot=%lu reset=%s(%d) saved=%d; display shows HH:MM only",
             (unsigned long)history.count, resetReasonName(), int(esp_reset_reason()), historySaved);
@@ -95,7 +141,7 @@ void DebugLog::tick() {
             Pins::BUTTON_1, Pins::BUTTON_2);
     }
     attached = connected;
-    if (uint32_t(millis() - lastReport) < 1000) return;
+    if (uint32_t(millis() - lastReport) < HEARTBEAT_INTERVAL_MS) return;
     lastReport = millis();
     const DateTime time = WatchClock::now();
     log("LOOP boot=%lu time=%02u:%02u:%02u rtc=%s B1=%d B2=%d EPD_BUSY=%d heap=%u",

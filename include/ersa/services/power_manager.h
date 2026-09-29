@@ -45,7 +45,6 @@ private:
 class PowerManager {
 public:
     static constexpr size_t MAX_WAKE_LOCKS = 16;
-    static constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 10000;
     static constexpr uint32_t DEEP_SLEEP_TIMEOUT_MS = 60000;
     static constexpr uint8_t LOW_BATTERY_PERCENT = 20;
     static constexpr uint16_t LOW_BATTERY_MV = 3600;
@@ -56,6 +55,7 @@ public:
 
     Result<void> init();
     void tick(uint32_t currentUptimeMs);
+    uint32_t nextBatterySampleDelayMs(uint32_t currentUptimeMs) const;
 
     // WakeLock API (Section 10)
     WakeLock acquireWakeLock(const char* tag);
@@ -68,6 +68,8 @@ public:
     uint32_t getIdleTimeMs(uint32_t currentUptimeMs) const;
 
     uint16_t getBatteryMv() const;
+    uint32_t getBatterySampleAgeMs(uint32_t nowMs) const { return nowMs - lastBatterySampleMs_; }
+    bool hasBatterySample() const { return cachedMv_ != 0; }
     uint8_t getBatteryPercent() const;
     bool isBatteryConnected() const;
     bool isCharging() const;
@@ -90,6 +92,7 @@ private:
     PowerState state_{PowerState::Active};
     uint32_t lastActivityMs_{0};
     uint32_t lastBatterySampleMs_{0};
+    uint32_t batterySampleIntervalMs() const;
 
     uint16_t cachedMv_{0};
     uint8_t cachedPercent_{100};
