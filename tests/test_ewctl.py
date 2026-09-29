@@ -38,6 +38,15 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ewctl.EwctlError):
                 ewctl.parse_args_json(text)
 
+    def test_power_frequency_commands_have_cli_forms(self):
+        parser = ewctl.build_parser()
+        set_args = parser.parse_args(["power", "cpu-freq-set", "40"])
+        self.assertEqual((set_args.operation, set_args.power_action, set_args.mhz), ("power", "cpu-freq-set", "40"))
+        get_args = parser.parse_args(["power", "cpu-freq-get"])
+        self.assertEqual((get_args.operation, get_args.power_action), ("power", "cpu-freq-get"))
+        self.assertTrue(parser.parse_args(["--json", "power"]).json)
+        self.assertTrue(parser.parse_args(["power", "cpu-freq-get", "--json"]).json)
+
 
 if __name__ == "__main__":
     unittest.main()

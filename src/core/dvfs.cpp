@@ -34,6 +34,16 @@ uint32_t interactiveScopes = 0;
 uint32_t computeScopes = 0;
 bool ready = false;
 bool reportWritten = false;
+unsigned testFrequencyMHz = 0;
+
+esp_err_t configureFrequencyRange(unsigned minMHz, unsigned maxMHz) {
+    const esp_pm_config_esp32c3_t config = {
+        .max_freq_mhz = static_cast<int>(maxMHz),
+        .min_freq_mhz = static_cast<int>(minMHz),
+        .light_sleep_enable = true
+    };
+    return esp_pm_configure(&config);
+}
 
 LockState& stateFor(Profile profile) {
     return profile == Profile::Compute ? compute : interactive;
@@ -169,6 +179,34 @@ void reportPowerModes() {
 #endif
 }
 
+bool setTestCpuFrequencyMHz(unsigned mhz) {
+    if (!ready || !mutex || (mhz != 0 && mhz != 40 && mhz != 80 && mhz != 160)) return false;
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return false;
+    const esp_err_t result = mhz == 0
+        ? configureFrequencyRange(40, 160)
+        : configureFrequencyRange(mhz, mhz);
+    if (result == ESP_OK) {
+        testFrequencyMHz = mhz;
+        lastLoggedMHz = cpuMHz();
+    }
+    xSemaphoreGive(mutex);
+    if (result == ESP_OK) {
+        if (mhz) {
+            DebugLog::log("DVFS: test CPU frequency forced to %u MHz (currently %lu MHz)",
+                          mhz, static_cast<unsigned long>(cpuMHz()));
+        } else {
+            DebugLog::log("DVFS: test override cleared; automatic range 40-160 MHz (currently %lu MHz)",
+                          static_cast<unsigned long>(cpuMHz()));
+        }
+    } else {
+        DebugLog::log("DVFS: test frequency configuration failed mhz=%u err=0x%x",
+                      mhz, unsigned(result));
+    }
+    return result == ESP_OK;
+}
+
+unsigned testCpuFrequencyMHz() { return testFrequencyMHz; }
+
 Scope::Scope(Profile profile, const char* reason)
     : profile_(profile), reason_(reason), acquired_(acquire(profile, reason)) {}
 
@@ -184,6 +222,8 @@ namespace Dvfs {
 bool begin() { return false; }
 void tick() {}
 void reportPowerModes() {}
+bool setTestCpuFrequencyMHz(unsigned mhz) { (void)mhz; return false; }
+unsigned testCpuFrequencyMHz() { return 0; }
 Scope::Scope(Profile profile, const char* reason)
     : profile_(profile), reason_(reason), acquired_(false) {
     (void)profile_; (void)reason_;

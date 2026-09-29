@@ -10,6 +10,10 @@ enum class Profile : unsigned char {
 bool begin();
 void tick(); // Samples CPU frequency while application code is running.
 void reportPowerModes(); // One-time ESP-IDF PM lock and frequency residency report.
+// Debug-only override used by the USB control bridge. 0 restores the normal
+// 40-160 MHz PM range; supported forced values are 40, 80 and 160 MHz.
+bool setTestCpuFrequencyMHz(unsigned mhz);
+unsigned testCpuFrequencyMHz();
 
 class Scope {
 public:

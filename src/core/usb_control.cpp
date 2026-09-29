@@ -149,6 +149,23 @@ uint32_t requestCursor(const char* json) {
     return parseUnsigned(value, cursor) ? cursor : UINT32_MAX;
 }
 
+bool requestUnsignedArg(const char* json, const char* name, uint32_t& out) {
+    char key[64];
+    const int keyLength = snprintf(key, sizeof(key), "\"%s\"", name);
+    if (keyLength <= 0 || size_t(keyLength) >= sizeof(key)) return false;
+    const char* p = strstr(json, key);
+    if (!p) return false;
+    p += keyLength;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (*p++ != ':') return false;
+    while (*p == ' ' || *p == '\t') ++p;
+    const char* end = p;
+    while (*end >= '0' && *end <= '9') ++end;
+    if (end == p) return false;
+    Slice value{p, size_t(end - p)};
+    return parseUnsigned(value, out);
+}
+
 size_t appendEscaped(char* out, size_t cap, size_t pos, const char* text) {
     if (!cap || pos >= cap) return pos;
     out[pos++] = '"';
@@ -233,28 +250,70 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
                  caps.dial ? "true" : "false", caps.hangup ? "true" : "false");
         sendReply(id, true, nullptr, nullptr, data);
     } else if (strcmp(command, "power.status") == 0) {
-        char data[160];
-        snprintf(data, sizeof(data), "{\"state\":\"%s\",\"power_locks_clear\":%s,\"cpu_mhz\":%u,\"usb_blocks_sleep\":%s}",
+        char data[200];
+        snprintf(data, sizeof(data), "{\"state\":\"%s\",\"power_locks_clear\":%s,\"cpu_mhz\":%u,\"cpu_test_override_mhz\":%u,\"usb_blocks_sleep\":%s}",
                  powerStateName(power.getState()), power.canSleep() ? "true" : "false", unsigned(getCpuFrequencyMhz()),
+                 Dvfs::testCpuFrequencyMHz(),
                  bool(Serial) ? "true" : "false");
         sendReply(id, true, nullptr, nullptr, data);
-    } else if (strcmp(command, "logs.read") == 0) {
-        const uint32_t latest = DebugLog::latestSequence();
-        uint32_t cursor = requestCursor(request);
-        if (cursor == UINT32_MAX) cursor = latest ? latest - 1 : 0;
-        DebugLog::Record record{};
-        uint32_t next = cursor;
-        const size_t count = DebugLog::readSince(cursor, &record, 1, &next);
-        char data[RESPONSE_LIMIT];
-        char escapedLine[380] = {};
-        if (count) {
-            appendEscaped(escapedLine, sizeof(escapedLine), 0, record.text);
-            snprintf(data, sizeof(data), "{\"records\":[{\"sequence\":%lu,\"line\":%s}],\"next_cursor\":%lu}",
-                     static_cast<unsigned long>(record.sequence), escapedLine,
-                     static_cast<unsigned long>(next));
+    } else if (strcmp(command, "power.cpu-freq-get") == 0) {
+        char data[128];
+        snprintf(data, sizeof(data), "{\"cpu_mhz\":%u,\"test_override_mhz\":%u,\"automatic\":%s}",
+                 unsigned(getCpuFrequencyMhz()), Dvfs::testCpuFrequencyMHz(),
+                 Dvfs::testCpuFrequencyMHz() == 0 ? "true" : "false");
+        sendReply(id, true, nullptr, nullptr, data);
+    } else if (strcmp(command, "power.cpu-freq-set") == 0) {
+        uint32_t mhz = UINT32_MAX;
+        if (!requestUnsignedArg(request, "cpu_mhz", mhz) || (mhz != 0 && mhz != 40 && mhz != 80 && mhz != 160)) {
+            sendReply(id, false, "invalid_argument", "cpu_mhz must be 0, 40, 80, or 160", nullptr);
+        } else if (!Dvfs::setTestCpuFrequencyMHz(unsigned(mhz))) {
+            sendReply(id, false, "unavailable", "DVFS is not initialized or ESP-IDF rejected the test frequency", nullptr);
         } else {
-            snprintf(data, sizeof(data), "{\"records\":[],\"next_cursor\":%lu}", static_cast<unsigned long>(next));
+            char data[128];
+            snprintf(data, sizeof(data), "{\"cpu_mhz\":%u,\"test_override_mhz\":%u,\"automatic\":%s}",
+                     unsigned(getCpuFrequencyMhz()), Dvfs::testCpuFrequencyMHz(), mhz == 0 ? "true" : "false");
+            sendReply(id, true, nullptr, nullptr, data);
         }
+    } else if (strcmp(command, "logs.read") == 0) {
+        uint32_t limit = 4;
+        if (requestUnsignedArg(request, "limit", limit) && (limit < 1 || limit > 4)) {
+            sendReply(id, false, "invalid_argument", "limit must be between 1 and 4", nullptr);
+            return;
+        }
+        uint32_t cursor = requestCursor(request);
+        if (cursor == UINT32_MAX) {
+            const uint32_t latest = DebugLog::latestSequence();
+            cursor = latest > limit ? latest - limit : 0;
+        }
+        DebugLog::Record records[4]{};
+        uint32_t observed = cursor;
+        const size_t count = DebugLog::readSince(cursor, records, limit, &observed);
+        char data[RESPONSE_LIMIT];
+        size_t pos = size_t(snprintf(data, sizeof(data), "{\"records\":["));
+        uint32_t next = cursor;
+        size_t emitted = 0;
+        for (size_t i = 0; i < count && pos < sizeof(data); ++i) {
+            char prefix[64];
+            const int prefixLength = snprintf(prefix, sizeof(prefix),
+                                              "%s{\"sequence\":%lu,\"line\":",
+                                              emitted ? "," : "",
+                                              static_cast<unsigned long>(records[i].sequence));
+            if (prefixLength <= 0 || size_t(prefixLength) >= sizeof(prefix) ||
+                size_t(prefixLength) + 60 >= sizeof(data) - pos) break;
+            memcpy(data + pos, prefix, size_t(prefixLength));
+            pos += size_t(prefixLength);
+            // Reserve room for the closing object/array and cursor field. A
+            // long log line is truncated at a UTF-8 byte boundary only if it
+            // contains printable ASCII; diagnostics currently are ASCII.
+            const size_t reserve = 56;
+            if (sizeof(data) - pos <= reserve + 3) break;
+            const size_t written = appendEscaped(data + pos, sizeof(data) - pos - reserve, 0, records[i].text);
+            if (!written) break;
+            pos += written;
+            next = records[i].sequence;
+            ++emitted;
+        }
+        snprintf(data + pos, sizeof(data) - pos, "],\"next_cursor\":%lu}", static_cast<unsigned long>(next));
         sendReply(id, true, nullptr, nullptr, data);
     } else if (strcmp(command, "job.get") == 0) {
         sendReply(id, false, "unsupported", "asynchronous jobs are not implemented", nullptr);

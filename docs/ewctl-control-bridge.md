@@ -6,7 +6,7 @@ Provide a small, scriptable USB control surface for inspecting and operating an 
 
 The first transport is the ESP32-C3 USB Serial/JTAG console. Keep the protocol transport-neutral so a later BLE or network transport can reuse command handling with a separate policy.
 
-The host client lives at `scripts/ewctl.py` and uses Python with `pyserial` (`python3 -m pip install -r requirements-ewctl.txt`). Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py command battery.read`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
+The host client lives at `scripts/ewctl.py` and uses Python, `pyserial`, and Rich (`python3 -m pip install -r requirements-ewctl.txt`). It renders readable Rich tables by default; pass `--json` for machine-readable output. Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py power cpu-freq-set 40`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ flowchart LR
     dispatch --> logring
 ```
 
-The endpoint is polled from the firmware application loop. It reads at most 64 bytes and dispatches at most one complete request per pass; it does not create a second task or call application code from a USB callback. A fixed 512-byte line buffer bounds memory use. The current handlers are short, read-only service queries; long operations and job polling are not implemented.
+The endpoint is polled from the firmware application loop. It reads at most 64 bytes and dispatches at most one complete request per pass; it does not create a second task or call application code from a USB callback. A fixed 512-byte line buffer bounds memory use. Status and log handlers are queries; CPU frequency commands are narrowly scoped development settings. Long operations and job polling are not implemented.
 
 The USB transport uses the existing Arduino `Serial` USB Serial/JTAG console. The parser does not depend on a JSON library. Firmware diagnostics are kept in a bounded ring and raw log output is suppressed after the first valid protocol request, preventing log text from corrupting replies.
 
@@ -61,7 +61,7 @@ The current endpoint has no asynchronous jobs or dispatch queue. It processes on
 
 ## Command model
 
-The implemented command set is read-only:
+Implemented commands:
 
 | Command | Result |
 | --- | --- |
@@ -69,10 +69,27 @@ The implemented command set is read-only:
 | `battery.read` | Latest voltage and estimated percentage, with sample age and validity |
 | `ble.status` | Link and advertising state, active companion source IDs, discovered capabilities |
 | `power.status` | CPU frequency/PM mode, sleep eligibility/block reason, active power locks |
-| `logs.read` | Bounded recent diagnostic records, with cursor for pagination |
+| `power.cpu-freq-get` | Measured CPU MHz, active test override, and automatic/forced mode |
+| `power.cpu-freq-set` | Temporarily pin to 40/80/160 MHz; value `0` restores automatic 40–160 MHz scaling |
+| `logs.read` | Bounded batch of recent diagnostic records, with cursor for pagination |
 | `job.get` | State and result for an asynchronous job |
 
-The first five commands are implemented. `logs.read` returns one record and a `next_cursor`, allowing `ewctl logs --follow` to poll for new records. `job.get` is reserved and currently returns `unsupported`.
+`system.status`, `battery.read`, `ble.status`, `power.status`, both CPU-frequency commands, and `logs.read` are implemented. `logs.read` returns up to four records (constrained by the response size) and a `next_cursor`, allowing `ewctl logs --follow` to drain the backlog without one USB round trip per line. `job.get` is reserved and currently returns `unsupported`.
+
+Read the active frequency and override:
+
+```sh
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
+```
+
+Force a frequency for a test, then restore normal dynamic PM scaling:
+
+```sh
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
+```
+
+The override is volatile and resets on reboot. Set accepts 0, 40, 80, or 160 MHz; zero restores automatic scaling. Confirm the actual clock with `power cpu-freq-get` after each request.
 
 Follow-up commands can request `agenda.refresh`, `ble.restart-advertising`, or `system.reboot`. Commands that mutate configuration, clear data, or reboot must be explicitly named and return an acknowledgement before execution. Do not provide an arbitrary shell, memory read/write, or unrestricted register command.
 
@@ -84,18 +101,19 @@ Responses should report capability and validity instead of inventing defaults. F
 - Read no more than 64 bytes and dispatch no more than one request per loop pass to preserve UI and BLE responsiveness.
 - The existing UI sleep guard blocks automatic light sleep while USB CDC is attached because C3 USB Serial/JTAG loses its connection in light sleep. Detaching USB clears protocol mode; there is no separate inactivity lease yet.
 - Do not disable BLE power policy merely because USB is attached. Report the exact sleep blocker in `power.status`.
+- CPU frequency override is temporary, applies only until reboot, and may reduce BLE/Wi-Fi responsiveness at 40 MHz. `power cpu-freq-get` verifies the measured clock and override.
 - USB Serial/JTAG and firmware logs share a physical stream. Diagnostics go to a 16-record in-memory ring and are exposed through `logs.read`. Once a valid request arrives, raw logging is suppressed until USB disconnect so replies remain machine-readable.
 - If the host opens or closes the serial port during sleep, recover cleanly. The watch continues its normal boot path and BLE advertising even when no host is present.
 
 ## Reliability and validation
 
-The endpoint enforces a 512-byte request bound, required version/ID/command fields, numeric ID parsing, and bounded command names. It discards malformed and oversized lines through the next newline and resumes. Unsupported valid commands receive a structured error. Full JSON schema/depth validation and argument validation must be added before mutating commands are introduced.
+The endpoint enforces a 512-byte request bound, required version/ID/command fields, numeric ID parsing, and bounded command names. It discards malformed and oversized lines through the next newline and resumes. CPU frequency inputs are restricted to 0, 40, 80, or 160 MHz. Unsupported valid commands receive a structured error. Full JSON schema/depth validation remains a follow-up before broader mutating commands are introduced.
 
-The host client has unit tests for request framing, size limits, malformed replies, and argument parsing. Firmware parser/dispatcher host tests and hardware validation remain needed, including attach/detach, command bursts, log cursor polling, BLE activity during a USB session, and sleep after disconnect. Do not claim hardware protocol validation until the firmware endpoint is flashed and exercised on the watch.
+The host client has unit tests for request framing, size limits, malformed replies, and argument parsing. The firmware has been built and flashed; USB command protocol behavior still needs an on-device pass for attach/detach, command bursts, log cursor polling, BLE activity during a USB session, forced-clock response, and sleep after disconnect.
 
 ## Rollout
 
-1. Implemented: Python host CLI, bounded USB request scanner, versioned NDJSON replies, read-only status handlers, and log-ring polling.
+1. Implemented: Rich Python host CLI, bounded USB request scanner, versioned NDJSON replies, status handlers, temporary CPU-frequency testing, and batched log-ring polling.
 2. Validate the parser independently on host and test attach/detach, command bursts, and sleep behavior on hardware.
 3. Add explicit schema validation and an inactivity lease if needed before implementing mutating or asynchronous commands.
 4. Keep protocol version negotiation backward-compatible as commands are added.
