@@ -48,11 +48,10 @@ BoardAmpereT1e::BoardAmpereT1e()
 
 Result<void> BoardAmpereT1e::init() {
     Board::setCurrent(this);
-    input_.init();
-    rtc_.init();
-    display_.init();
-    bluetooth_.init();
-    return Result<void>();
+    // The board owns construction and pin mapping. Service managers initialize
+    // RTC, display, battery and BLE in the system boot sequence; initializing
+    // those devices here too caused duplicate peripheral/radio startup.
+    return input_.init();
 }
 
 uint32_t BoardAmpereT1e::getUptimeMs() const {

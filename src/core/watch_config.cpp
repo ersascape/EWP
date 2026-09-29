@@ -21,6 +21,31 @@ void safeCopy(char* dest, const char* src, size_t maxLen) {
     strncpy(dest, src, maxLen - 1);
     dest[maxLen - 1] = '\0';
 }
+
+uint8_t sanitizeLoadedConfig() {
+    uint8_t repaired = 0;
+    if (activeConfig.timezoneOffsetMin < -840 || activeConfig.timezoneOffsetMin > 840) {
+        activeConfig.timezoneOffsetMin = ersa::config::DEFAULT_TIMEZONE_OFFSET_MIN;
+        ++repaired;
+    }
+    if (activeConfig.fullRefreshInterval == 0 || activeConfig.fullRefreshInterval > 60) {
+        activeConfig.fullRefreshInterval = ersa::config::DEFAULT_FULL_REFRESH_CYCLES;
+        ++repaired;
+    }
+    if (activeConfig.apSsid[0] == '\0') {
+        safeCopy(activeConfig.apSsid, ersa::config::DEFAULT_AP_SSID, sizeof(activeConfig.apSsid));
+        ++repaired;
+    }
+    if (strlen(activeConfig.apPass) < 8) {
+        safeCopy(activeConfig.apPass, ersa::config::DEFAULT_AP_PASS, sizeof(activeConfig.apPass));
+        ++repaired;
+    }
+    if (activeConfig.apTimeoutSec < 30 || activeConfig.apTimeoutSec > 3600) {
+        activeConfig.apTimeoutSec = ersa::config::DEFAULT_AP_TIMEOUT_SEC;
+        ++repaired;
+    }
+    return repaired;
+}
 } // namespace
 
 void resetDefaults() {
@@ -81,6 +106,9 @@ void begin() {
     } else {
         DebugLog::log("CONFIG no stored preferences; using defaults");
     }
+    const uint8_t repaired = sanitizeLoadedConfig();
+    if (repaired)
+        DebugLog::log("CONFIG validation repaired %u invalid setting(s) with defaults", unsigned(repaired));
 }
 
 const Config& get() {
