@@ -212,6 +212,19 @@ Compile the production firmware using PlatformIO:
 ```bash
 make firmware
 ```
+
+The firmware is built as an ESP-IDF 4.4 project for the ESP32-C3, with Arduino
+included as an ESP-IDF component while the current board drivers are migrated
+behind the hardware interfaces. This keeps the existing display, RTC, networking,
+and Apple BLE implementation working while ESP-IDF owns the project configuration
+and FreeRTOS power management. Tickless idle and Bluetooth modem sleep are enabled
+in `sdkconfig.defaults`; automatic light sleep is currently disabled at runtime
+while button wake and e-paper timing are validated. `huge_app.csv` preserves the
+current 4 MB flash layout.
+
+The generated firmware remains at `.pio/build/ErsaWearable/firmware.bin`. Run
+`make test` for the host-side protocol and service tests.
+
 The `Firmware` GitHub Actions workflow also builds on pull requests and pushes to
 `master`, then stores the application image and factory image as a 30-day workflow
 artifact. To publish downloadable firmware under **GitHub Releases**, push an
@@ -223,8 +236,9 @@ git push origin ewp-0.1
 ```
 
 Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for
-factory flashing, checksums, and flashing instructions. Factory flashing resets saved
-watch settings; see the attached `FLASHING.md` before using it.
+factory flashing, checksums, and flashing instructions. Use `firmware.bin` for routine
+updates; it preserves saved Wi-Fi and watch settings. Factory flashing resets saved
+settings; see the attached `FLASHING.md` before using it.
 
 ### 3. Flash to Device
 Download `ewp-factory.bin` from a GitHub Release, connect the Ampere Works T1E via
@@ -235,7 +249,8 @@ USB-C, then run the one-command flasher:
 ```
 
 The script chooses the factory or app offset from the image name and detects a
-single connected serial port. If more than one port is available, pass it explicitly:
+single connected serial port. With no image argument, it prefers the locally built
+app image to preserve settings. If more than one port is available, pass it explicitly:
 `./scripts/flash_firmware.sh ~/Downloads/ewp-factory.bin /dev/ttyACM0`. With no image
 argument it uses a locally packaged factory image, or falls back to the local build's
 `firmware.bin` app image. Factory flashing resets saved watch settings.

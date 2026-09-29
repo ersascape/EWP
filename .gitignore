@@ -37,6 +37,8 @@ tests/run_tests
 flasher_args.json # Generated in build directory
 sdkconfig.old
 sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
 
 # ESP-IDF dependencies
 # For older versions or manual component management

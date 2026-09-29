@@ -2,15 +2,16 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-default_image="$repo_root/.pio/release/ewp-factory.bin"
+default_image="$repo_root/.pio/build/ErsaWearable/firmware.bin"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/flash_firmware.sh [firmware.bin|ewp-factory.bin] [serial-port]
 
-Pass either image downloaded from a GitHub Release. The factory image is used
-when available if the image argument is omitted. A firmware.bin app update is
-written at 0x10000; an ewp-factory.bin image is written at 0x0.
+Pass either image downloaded from a GitHub Release. With no image argument,
+the local app image is used when available, preserving saved watch settings.
+A firmware.bin app update is written at 0x10000; an ewp-factory.bin image is
+written at 0x0 and resets saved settings.
 
 The serial port can also be set with PORT=/dev/ttyACM0.
 EOF
@@ -22,8 +23,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 image="${1:-$default_image}"
-if [[ ! -f "$image" && $# -eq 0 && -f "$repo_root/.pio/build/ErsaWearable/firmware.bin" ]]; then
-  image="$repo_root/.pio/build/ErsaWearable/firmware.bin"
+if [[ ! -f "$image" && $# -eq 0 && -f "$repo_root/.pio/release/firmware.bin" ]]; then
+  image="$repo_root/.pio/release/firmware.bin"
 fi
 if [[ ! -f "$image" ]]; then
   echo "Firmware image not found: $image" >&2
