@@ -6,6 +6,9 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/services/power_manager.h"
 #include <Arduino.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_image_format.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -231,6 +234,34 @@ const char* powerStateName(ersa::services::PowerState state) {
     }
 }
 
+const char* otaImageStateName(esp_ota_img_states_t state) {
+    switch (state) {
+        case ESP_OTA_IMG_NEW: return "new";
+        case ESP_OTA_IMG_PENDING_VERIFY: return "pending_verify";
+        case ESP_OTA_IMG_VALID: return "valid";
+        case ESP_OTA_IMG_INVALID: return "invalid";
+        case ESP_OTA_IMG_ABORTED: return "aborted";
+        default: return "undefined";
+    }
+}
+
+const char* otaSlotName(const esp_partition_t* partition) {
+    if (!partition) return "none";
+    if (partition->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0) return "ota_0";
+    if (partition->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1) return "ota_1";
+    return "other";
+}
+
+bool otaPartitionBootable(const esp_partition_t* partition) {
+    if (!partition) return false;
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(partition, &state) == ESP_OK &&
+        (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED)) return false;
+    const esp_partition_pos_t position{partition->address, partition->size};
+    esp_image_metadata_t metadata{};
+    return esp_image_verify(ESP_IMAGE_VERIFY, &position, &metadata) == ESP_OK;
+}
+
 void handleRequest(uint32_t id, uint32_t version, const char* command, const char* request) {
     if (version != 1) { sendReply(id, false, "version", "unsupported protocol version", nullptr); return; }
     auto& power = ersa::services::PowerManager::instance();
@@ -239,8 +270,8 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
         const auto* app = ersa::app::ApplicationManager::instance().getActiveApp();
         const char* appId = app ? app->getId() : "none";
         char data[RESPONSE_LIMIT];
-        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"build\":\"%s %s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
-                 __DATE__, __TIME__, static_cast<unsigned long>(millis() / 1000), DebugLog::resetReasonName(), appId,
+        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"build\":\"%s %s\",\"running_slot\":\"%s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
+                 __DATE__, __TIME__, otaSlotName(esp_ota_get_running_partition()), static_cast<unsigned long>(millis() / 1000), DebugLog::resetReasonName(), appId,
                  static_cast<unsigned long>(ESP.getFreeHeap()), powerStateName(power.getState()), power.canSleep() ? "true" : "false");
         sendReply(id, true, nullptr, nullptr, data);
     } else if (strcmp(command, "battery.read") == 0) {
@@ -258,6 +289,78 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
                  bluetooth.companionSourceId(), bluetooth.companionSourceAvailable() ? "true" : "false",
                  caps.notifications ? "true" : "false", caps.media ? "true" : "false", caps.calls ? "true" : "false",
                  caps.dial ? "true" : "false", caps.hangup ? "true" : "false");
+        sendReply(id, true, nullptr, nullptr, data);
+    } else if (strcmp(command, "ota.status") == 0) {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* update = esp_ota_get_next_update_partition(nullptr);
+        esp_ota_img_states_t imageState = ESP_OTA_IMG_UNDEFINED;
+        const bool stateAvailable = running && esp_ota_get_state_partition(running, &imageState) == ESP_OK;
+        const esp_partition_t* slot0 = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+        const esp_partition_t* slot1 = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+        const esp_partition_t* other = running && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 ? slot1 : slot0;
+        esp_ota_img_states_t otherState = ESP_OTA_IMG_UNDEFINED;
+        const bool otherStateAvailable = other && esp_ota_get_state_partition(other, &otherState) == ESP_OK;
+        const bool otherBootable = otaPartitionBootable(other);
+        char data[512];
+        snprintf(data, sizeof(data),
+                 "{\"running_slot\":\"%s\",\"running_offset\":%lu,\"running_size\":%lu,\"image_state\":\"%s\",\"state_available\":%s,\"other_slot\":\"%s\",\"other_image_state\":\"%s\",\"other_state_available\":%s,\"other_bootable\":%s,\"update_slot\":\"%s\",\"update_offset\":%lu,\"update_size\":%lu,\"dual_slot\":%s,\"rollback_enabled\":%s,\"pending_confirmation\":%s}",
+                 otaSlotName(running), static_cast<unsigned long>(running ? running->address : 0),
+                 static_cast<unsigned long>(running ? running->size : 0),
+                 stateAvailable ? otaImageStateName(imageState) : "unavailable", stateAvailable ? "true" : "false",
+                 otaSlotName(other), otherStateAvailable ? otaImageStateName(otherState) : "undefined",
+                 otherStateAvailable ? "true" : "false", otherBootable ? "true" : "false",
+                 otaSlotName(update), static_cast<unsigned long>(update ? update->address : 0),
+                 static_cast<unsigned long>(update ? update->size : 0), slot0 && slot1 ? "true" : "false",
+#if defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) && CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+                 "true",
+#else
+                 "false",
+#endif
+                 stateAvailable && imageState == ESP_OTA_IMG_PENDING_VERIFY ? "true" : "false");
+        sendReply(id, true, nullptr, nullptr, data);
+    } else if (strcmp(command, "ota.boot-other") == 0) {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* slot0 = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+        const esp_partition_t* slot1 = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+        const esp_partition_t* other = running && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 ? slot1 : slot0;
+        if (!otaPartitionBootable(other)) {
+            sendReply(id, false, "not_bootable", "other OTA slot has no valid boot image", nullptr);
+        } else {
+            const esp_err_t result = esp_ota_set_boot_partition(other);
+            if (result != ESP_OK) {
+                sendReply(id, false, "selection_failed", "ESP-IDF rejected the alternate slot", nullptr);
+            } else {
+                char data[96];
+                snprintf(data, sizeof(data), "{\"next_boot_slot\":\"%s\",\"restart_required\":true}", otaSlotName(other));
+                sendReply(id, true, nullptr, nullptr, data);
+                restartAfterReply = true;
+                restartDeadlineMs = 0;
+            }
+        }
+    } else if (strcmp(command, "power.get-dvfs-state") == 0) {
+        char report[1400];
+        const bool complete = Dvfs::getPowerModeReport(report, sizeof(report));
+        char data[RESPONSE_LIMIT];
+        size_t pos = size_t(snprintf(data, sizeof(data), "{\"complete\":%s,\"cpu_mhz\":%u,\"report\":\"",
+                                     complete ? "true" : "false", unsigned(getCpuFrequencyMhz())));
+        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(report);
+             *p && pos + 8 < sizeof(data); ++p) {
+            if (*p == '"' || *p == '\\') {
+                data[pos++] = '\\'; data[pos++] = char(*p);
+            } else if (*p == '\n') {
+                data[pos++] = '\\'; data[pos++] = 'n';
+            } else if (*p == '\r') {
+                data[pos++] = '\\'; data[pos++] = 'r';
+            } else if (*p >= 0x20) {
+                data[pos++] = char(*p);
+            }
+        }
+        if (pos + 3 >= sizeof(data)) { sendReply(id, false, "response_too_large", "DVFS report exceeds control frame", nullptr); return; }
+        data[pos++] = '"'; data[pos++] = '}'; data[pos] = '\0';
         sendReply(id, true, nullptr, nullptr, data);
     } else if (strcmp(command, "power.status") == 0) {
         char data[200];

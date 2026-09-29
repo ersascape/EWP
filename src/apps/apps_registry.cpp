@@ -9,9 +9,11 @@
 #include "apps/app_now_playing.h"
 #include "apps/app_call.h"
 #include "apps/app_notifications.h"
+#include "ersa/services/ota_service.h"
 #include "core/buttons.h"
 #include "core/watch_clock.h"
 #include "core/debug_log.h"
+#include "fonts/misans_fonts.h"
 
 #if defined(ARDUINO)
 #include "hal/esp32/esp32_display.h"
@@ -49,6 +51,9 @@ public:
         } else if (legacy == Buttons::Event::Next) {
             AppDrawer::next();
             ApplicationManager::instance().markDirty(false);
+        } else if (legacy == Buttons::Event::Previous) {
+            AppDrawer::previous();
+            ApplicationManager::instance().markDirty(false);
         } else if (legacy == Buttons::Event::Action) {
             const auto item = AppDrawer::selected();
             switch (item) {
@@ -79,6 +84,9 @@ public:
                 case AppDrawer::Item::Status:
                     ApplicationManager::instance().switchTo("app_status");
                     break;
+                case AppDrawer::Item::Updater:
+                    ApplicationManager::instance().switchTo("app_updater");
+                    break;
                 default:
                     break;
             }
@@ -93,6 +101,81 @@ public:
         (void)display; (void)fullRefresh;
 #endif
     }
+};
+
+class UpdaterApp : public Application {
+public:
+    const char* getId() const override { return "app_updater"; }
+    const char* getTitle() const override { return "Updater"; }
+    Rect getPartialBounds() const override { return Rect{0, 24, 200, 152}; }
+
+    void onEnter() override { lastState_ = service().updateState(); }
+
+    void onEvent(const events::Event& event) override {
+        const auto legacy = toLegacyButtonEvent(event);
+        if (legacy == Buttons::Event::Home) {
+            ApplicationManager::instance().switchTo("app_drawer");
+        } else if (legacy == Buttons::Event::Action) {
+            if (service().updateState() == ersa::services::OtaService::UpdateState::Available)
+                service().installUpdate();
+            else
+                service().checkForUpdate();
+            ApplicationManager::instance().markDirty(false);
+        } else if (legacy == Buttons::Event::ActionAlt && service().otherSlotBootable()) {
+            if (service().selectOtherSlot()) {
+                delay(500);
+                ESP.restart();
+            }
+        }
+    }
+
+    void tick() override {
+        const auto state = service().updateState();
+        if (state != lastState_) {
+            lastState_ = state;
+            ApplicationManager::instance().markDirty(false);
+        }
+    }
+
+    void render(hal::IDisplay& display, bool fullRefresh) override {
+        (void)fullRefresh;
+#if defined(ARDUINO)
+        auto* esp = static_cast<hal::Esp32Display*>(&display);
+        if (!esp) return;
+        auto& gfx = esp->getGfx();
+        gfx.fillScreen(0);
+        gfx.setTextColor(1);
+        gfx.setFont(&MiSansLatin_Bold10pt7b);
+        gfx.setCursor(16, 24);
+        gfx.print("system update");
+        gfx.setFont(&MiSansLatin_Regular8pt7b);
+        gfx.setCursor(16, 52);
+        gfx.print("Running "); gfx.print(service().runningSlot());
+        gfx.setCursor(16, 72);
+        gfx.print("Image "); gfx.print(service().runningImageState());
+        gfx.setCursor(16, 91);
+        gfx.print("Other "); gfx.print(service().otherSlot());
+        gfx.print(" "); gfx.print(service().otherImageState());
+        gfx.setCursor(16, 105);
+        gfx.print(service().updateMessage());
+        if (service().updateVersion()[0]) {
+            gfx.setCursor(16, 126);
+            gfx.print("Release "); gfx.print(service().updateVersion());
+        }
+        gfx.setFont(&MiSansLatin_Regular8pt7b);
+        gfx.setCursor(16, 170);
+        gfx.print(service().updateState() == ersa::services::OtaService::UpdateState::Available
+                      ? "B2 install   B1 back" : "B2 check   B1 back");
+        gfx.setCursor(16, 190);
+        gfx.print(service().otherSlotBootable() ? "B2x2 boot other slot" : "other slot not bootable");
+#else
+        (void)display;
+#endif
+    }
+
+private:
+    static ersa::services::OtaService& service() { return ersa::services::OtaService::instance(); }
+    ersa::services::OtaService::UpdateState lastState_{ersa::services::OtaService::UpdateState::Idle};
 };
 
 // 2. AppCalendar Application
@@ -326,6 +409,7 @@ static StatusApp s_statusApp;
 static MediaApp s_mediaApp;
 static CallApp s_callApp;
 static NotificationApp s_notifApp;
+static UpdaterApp s_updaterApp;
 
 } // namespace
 
@@ -349,6 +433,7 @@ void registerAllApps(ApplicationManager& manager) {
     manager.registerApp(&s_mediaApp);
     manager.registerApp(&s_callApp);
     manager.registerApp(&s_notifApp);
+    manager.registerApp(&s_updaterApp);
 }
 
 } // namespace app

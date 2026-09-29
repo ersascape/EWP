@@ -18,7 +18,8 @@ const char* const labels[static_cast<size_t>(Item::Count)] = {
     ersa::strings::APP_TITLE_AGENDA,
     ersa::strings::APP_TITLE_TASKS,
     ersa::strings::APP_TITLE_HOTSPOT,
-    ersa::strings::APP_TITLE_STATUS
+    ersa::strings::APP_TITLE_STATUS,
+    "updater"
 };
 
 } // namespace
@@ -68,15 +69,21 @@ void render(Adafruit_GFX& display, bool full) {
 
     display.setTextColor(1);
 
-    constexpr int16_t startY = 36;
-    constexpr int16_t rowHeight = 16;
+    constexpr uint8_t visibleItems = 4;
+    constexpr int16_t startY = 62;
+    constexpr int16_t rowHeight = 29;
+    const uint8_t selectedIndex = static_cast<uint8_t>(currentSelection);
+    const uint8_t first = (selectedIndex / visibleItems) * visibleItems;
+    const uint8_t candidateEnd = first + visibleItems;
+    const uint8_t end = candidateEnd < static_cast<uint8_t>(Item::Count)
+                            ? candidateEnd : static_cast<uint8_t>(Item::Count);
 
-    for (uint8_t i = 0; i < static_cast<uint8_t>(Item::Count); ++i) {
-        const int16_t itemY = startY + i * rowHeight;
-        const bool isSelected = (i == static_cast<uint8_t>(currentSelection));
+    for (uint8_t i = first; i < end; ++i) {
+        const int16_t itemY = startY + (i - first) * rowHeight;
+        const bool isSelected = (i == selectedIndex);
 
         if (isSelected) {
-            display.fillRoundRect(14, itemY - 12, 172, 15, 3, 1);
+            display.fillRoundRect(10, itemY - 16, 180, 23, 4, 1);
             display.setTextColor(0); // Black text on white pill
             display.setFont(&MiSansLatin_Bold8pt7b);
             display.setCursor(24, itemY);
@@ -88,6 +95,7 @@ void render(Adafruit_GFX& display, bool full) {
             display.print(labels[i]);
         }
     }
+
 }
 
 } // namespace AppDrawer

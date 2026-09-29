@@ -19,7 +19,7 @@ docker run --rm \
   -v "$ROOT:/workspace" \
   archlinux:base-devel \
   bash -euc '
-    pacman -Syu --noconfirm --needed git pacman-contrib python python-pyserial python-rich
+    pacman -Syu --noconfirm --needed git pacman-contrib python python-pyserial python-rich esptool python-construct python-pygdbmi
     useradd --create-home builder
     mkdir -p /tmp/ewctl-pkgbuild /workspace/.pio/release
     cp /workspace/packaging/arch/ewctl/PKGBUILD /tmp/ewctl-pkgbuild/PKGBUILD

@@ -36,6 +36,7 @@ COMMANDS = {
     "status": "system.status",
     "battery": "battery.read",
     "ble": "ble.status",
+    "ota": "ota.status",
     "power": "power.status",
     "logs": "logs.read",
 }
@@ -221,6 +222,11 @@ def build_parser() -> argparse.ArgumentParser:
     for alias in ("status", "battery", "ble"):
         item = sub.add_parser(alias, help=f"request {COMMANDS[alias]}")
         item.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print machine-readable JSON")
+    ota = sub.add_parser("ota", help="inspect or select OTA boot slots")
+    ota.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print machine-readable JSON")
+    ota_actions = ota.add_subparsers(dest="ota_action")
+    boot_other = ota_actions.add_parser("boot-other", help="boot from the other slot if it contains a valid image")
+    boot_other.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print machine-readable JSON")
     power = sub.add_parser("power", help="inspect or test CPU power settings")
     power.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print machine-readable JSON")
     power_actions = power.add_subparsers(dest="power_action")
@@ -233,6 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_frequency = power_actions.add_parser("cpu-freq-set", help="temporarily force CPU frequency (0 restores automatic scaling)")
     set_frequency.add_argument("mhz", choices=("0", "40", "80", "160"))
     set_frequency.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print machine-readable JSON")
+    power_actions.add_parser("get-dvfs-state", help="show ESP-IDF power locks and CPU sleep residency")
     logs = sub.add_parser("logs", help=f"request {COMMANDS['logs']}")
     logs.add_argument("--follow", action="store_true", help="stream live USB console output until Ctrl-C (does not use logs.read)")
     logs.add_argument("--interval", type=float, default=0.1, help="seconds between polls when caught up (default: %(default)s)")
@@ -279,6 +286,9 @@ def display_reply(reply: dict, title: str, json_output: bool = False) -> None:
         console.print(Panel(f"[bold red]{error.get('code', 'error')}[/]  {error.get('message', 'request failed')}", title=title, border_style="red"))
         return
     data = reply.get("data", {})
+    if title == "power get-dvfs-state" and isinstance(data, dict):
+        console.print(Panel(data.get("report", "No DVFS report returned"), title=title, border_style="blue"))
+        return
     if isinstance(data, dict) and isinstance(data.get("records"), list):
         records = data["records"]
         if not records:
@@ -625,7 +635,7 @@ def run(args: argparse.Namespace) -> int:
             esptool = next((path for path in ("esptool", "esptool.py")
                             if shutil.which(path)), None)
             if not esptool:
-                raise EwctlError("esptool is required; install python-esptool")
+                raise EwctlError("esptool is required; install the Arch 'esptool' package")
             command = [esptool, "--chip", "esp32c3", "--port", args.port,
                        "--baud", "460800", "write-flash", offset, image]
             flash_env = None
@@ -703,15 +713,25 @@ def run(args: argparse.Namespace) -> int:
                 command, command_args = "power.cpu-freq-get", None
             elif args.power_action == "cpu-freq-set":
                 command, command_args = "power.cpu-freq-set", {"cpu_mhz": int(args.mhz)}
+            elif args.power_action == "get-dvfs-state":
+                command, command_args = "power.get-dvfs-state", None
             else:
                 command, command_args = "power.status", None
+        elif args.operation == "ota" and args.ota_action == "boot-other":
+            command, command_args = "ota.boot-other", None
         elif args.operation == "logs":
             command, command_args = COMMANDS["logs"], {"limit": args.batch_size}
         else:
             command = COMMANDS[args.operation] if args.operation in COMMANDS else args.name
             command_args = parse_args_json(getattr(args, "args", None))
         reply = session.request(command, command_args)
-        display_reply(reply, args.operation if args.operation != "command" else command, args.json)
+        if args.operation == "power" and args.power_action == "get-dvfs-state":
+            title = "power get-dvfs-state"
+        elif args.operation == "ota" and args.ota_action:
+            title = f"ota {args.ota_action}"
+        else:
+            title = args.operation if args.operation != "command" else command
+        display_reply(reply, title, args.json)
         return 0 if reply.get("ok") else 2
     finally:
         session.close()

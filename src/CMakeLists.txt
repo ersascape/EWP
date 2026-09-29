@@ -14,5 +14,5 @@ idf_component_register(
         "${LIB_ROOT}/Adafruit BusIO"
         "${LIB_ROOT}/RTClib/src"
         "${LIB_ROOT}/OneButton/src"
-    REQUIRES framework-arduinoespressif32
+    REQUIRES framework-arduinoespressif32 esp_https_ota mbedtls app_update esp_http_client
 )

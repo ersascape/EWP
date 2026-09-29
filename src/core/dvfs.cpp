@@ -1,4 +1,7 @@
 #include "dvfs.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #if defined(ARDUINO)
 #include <sdkconfig.h>
@@ -13,7 +16,6 @@
 #include <freertos/semphr.h>
 #include <atomic>
 #include <stdio.h>
-#include <stdlib.h>
 #include "core/debug_log.h"
 
 namespace Dvfs {
@@ -171,6 +173,30 @@ void reportPowerModes() {
 #endif
 }
 
+bool getPowerModeReport(char* buffer, size_t capacity) {
+    if (!buffer || capacity == 0 || !ready) return false;
+#if defined(CONFIG_PM_PROFILING) && CONFIG_PM_PROFILING
+    char* report = nullptr;
+    size_t reportSize = 0;
+    FILE* stream = open_memstream(&report, &reportSize);
+    if (!stream) return false;
+    const esp_err_t result = esp_pm_dump_locks(stream);
+    fclose(stream);
+    if (result != ESP_OK || !report) {
+        free(report);
+        return false;
+    }
+    const size_t copySize = reportSize < capacity - 1 ? reportSize : capacity - 1;
+    memcpy(buffer, report, copySize);
+    buffer[copySize] = '\0';
+    free(report);
+    return reportSize < capacity;
+#else
+    strlcpy(buffer, "ESP-IDF PM profiling is disabled", capacity);
+    return false;
+#endif
+}
+
 bool setTestCpuFrequencyMHz(unsigned mhz) {
     if (!ready || !mutex || (mhz != 0 && mhz != 40 && mhz != 80 && mhz != 160)) return false;
     // PM policy is configured once, before BLE and peripheral locks start.
@@ -198,6 +224,10 @@ namespace Dvfs {
 bool begin() { return false; }
 void tick() {}
 void reportPowerModes() {}
+bool getPowerModeReport(char* buffer, size_t capacity) {
+    if (buffer && capacity) strlcpy(buffer, "ESP-IDF PM profiling unavailable", capacity);
+    return false;
+}
 bool setTestCpuFrequencyMHz(unsigned mhz) { (void)mhz; return false; }
 unsigned testCpuFrequencyMHz() { return 0; }
 Scope::Scope(Profile profile, const char* reason)

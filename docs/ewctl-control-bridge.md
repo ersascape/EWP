@@ -6,11 +6,13 @@ Provide a small, scriptable USB control surface for inspecting and operating an 
 
 The first transport is the ESP32-C3 USB Serial/JTAG console. Keep the protocol transport-neutral so a later BLE or network transport can reuse command handling with a separate policy.
 
+`ewctl ota` reports the running app slot, ESP-IDF image state, the other slot's bootability, update target, partition sizes, and whether rollback confirmation is pending. `ewctl ota boot-other` validates the alternate image, selects it through ESP-IDF OTA metadata, replies over USB, then reboots into it. The equivalent updater-screen shortcut is a B2 double-click. `ewctl status` includes the running slot as well.
+
 The host client lives at `scripts/ewctl.py` and uses Python, `pyserial`, and Rich (`python3 -m pip install -r requirements-ewctl.txt`). It renders readable Rich tables by default; pass `--json` for machine-readable output. Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py power cpu-freq-set 40`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Follow mode streams the live USB console directly without sending `logs.read` requests; redirect it with `python3 scripts/ewctl.py logs --follow > watch.log` or use `logs --output watch.log`. Stop raw capture with Ctrl-C. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
 
-`ewctl flash firmware.bin` flashes an app image through the ESP32-C3 ROM bootloader. `ewctl flash ewp-factory.bin` flashes the factory image and resets saved settings. The image argument can be omitted to use the local build. Tagged GitHub releases can be downloaded, verified against their SHA-256 manifest, cached, and flashed with `ewctl flash release 0.1.2`; use `latest` for the latest stable release and `--factory` for its factory image. This uses the same ROM bootloader process and esptool wrapper as `scripts/flash_firmware.sh`, not the USB control bridge.
+`ewctl flash firmware.bin` flashes an app image through the ESP32-C3 ROM bootloader. `ewctl flash ewp-factory.bin` flashes the factory image and resets saved settings. The image argument can be omitted to use the local build. Tagged GitHub releases can be downloaded, verified against their SHA-256 manifest, cached, and flashed with `ewctl flash release 0.1.2`; use `latest` for the latest stable release and `--factory` for its factory image. This uses the same ROM bootloader process and esptool wrapper as `scripts/flash_firmware.sh`, not the USB control bridge. The app-image path writes the fixed `ota_0` address; after migration to the dual-slot table, use the on-device `updater` app for routine Wi-Fi updates because it selects the inactive slot and keeps bootloader rollback metadata consistent.
 
-`ewctl power log` samples battery voltage, CPU frequency, power state, BLE state, uptime, and heap to a timestamped CSV. Set `--interval 30 --duration 7200 --output run.csv`; duration `0` records until Ctrl-C. USB monitoring blocks the watch's normal sleep policy, so this helps compare telemetry but does not measure normal battery life.
+`ewctl power get-dvfs-state` captures ESP-IDF's current PM lock and CPU residency report on demand. It reports the measured CPU clock, lock counts/timing, and time in each PM mode, including sleep. `ewctl power log` samples battery voltage, CPU frequency, power state, BLE state, uptime, and heap to a timestamped CSV. Set `--interval 30 --duration 7200 --output run.csv`; duration `0` records until Ctrl-C. USB monitoring blocks the watch's normal sleep policy, so this helps compare telemetry but does not measure normal battery life.
 
 `ewctl debug bundle` creates a ZIP bug report with status snapshots and up to 16 recent logs. It redacts Wi-Fi SSIDs, tokens, and URLs from log lines. Add `--include-coredump` to decode and include the raw core; that opt-in dump may contain arbitrary task memory and should be reviewed before sharing.
 
@@ -84,16 +86,19 @@ Implemented commands:
 
 | Command | Result |
 | --- | --- |
-| `system.status` | Firmware/build identity, uptime, reset reason, active app, heap, USB session, power state |
+| `system.status` | Firmware/build identity, running OTA slot, uptime, reset reason, active app, heap, USB session, power state |
 | `battery.read` | Latest voltage and estimated percentage, with sample age and validity |
 | `ble.status` | Link and advertising state, active companion source IDs, discovered capabilities |
 | `power.status` | CPU frequency/PM mode, sleep eligibility/block reason, active power locks |
 | `power.cpu-freq-get` | Measured CPU MHz, active test override, and automatic/forced mode |
 | `power.cpu-freq-set` | Queue a 40/80/160 MHz test profile; value `0` restores automatic 40–160 MHz scaling |
+| `power.get-dvfs-state` | ESP-IDF power-management lock report and CPU residency per power mode |
+| `ota.status` | Running/alternate/update slots, image states, alternate bootability, rollback state |
+| `ota.boot-other` | Validate and select the alternate OTA slot, then reboot |
 | `logs.read` | Bounded batch of recent diagnostic records, with cursor for pagination |
 | `job.get` | State and result for an asynchronous job |
 
-`system.status`, `battery.read`, `ble.status`, `power.status`, both CPU-frequency commands, and `logs.read` are implemented. `logs.read` returns up to four records (constrained by the response size) and a `next_cursor`, allowing `ewctl logs --follow` to drain the backlog without one USB round trip per line. `job.get` is reserved and currently returns `unsupported`.
+`system.status`, `battery.read`, `ble.status`, `power.status`, both CPU-frequency commands, `power.get-dvfs-state`, both OTA commands, and `logs.read` are implemented. `logs.read` returns up to four records (constrained by the response size) and a `next_cursor`, allowing `ewctl logs --follow` to drain the backlog without one USB round trip per line. `job.get` is reserved and currently returns `unsupported`.
 
 Read the active frequency and override:
 
@@ -106,6 +111,9 @@ Queue a CPU profile for a test, then restore normal dynamic PM scaling:
 ```sh
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
+python3 scripts/ewctl.py --port /dev/ttyACM0 power get-dvfs-state
+python3 scripts/ewctl.py --port /dev/ttyACM0 ota
+python3 scripts/ewctl.py --port /dev/ttyACM0 ota boot-other
 ```
 
 ESP-IDF's global power policy is applied at boot. A set request returns an acknowledgement and then performs a controlled reboot to apply the profile; it does not reconfigure PM while BLE or peripheral locks are live. The request is held in RTC memory across that restart. `0` restores the automatic 40–160 MHz range. The 40 MHz profile uses a 40 MHz floor and an 80 MHz ceiling because ESP-IDF supports 80/160 MHz CPU maxima; BLE's APB lock can raise the live CPU to 80 MHz. Check the measured clock with `power cpu-freq-get` after the watch restarts.

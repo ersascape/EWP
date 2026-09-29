@@ -12,6 +12,9 @@ Pass either image downloaded from a GitHub Release. With no image argument,
 the local app image is used when available, preserving saved watch settings.
 A firmware.bin app update is written at 0x10000; an ewp-factory.bin image is
 written at 0x0 and resets saved settings.
+After migrating to the dual-slot layout, this app path always writes ota_0 and
+cannot detect the active slot. Do not use it for routine updates; use the
+on-device updater, which selects the inactive slot and verifies it before boot.
 
 The serial port can also be set with PORT=/dev/ttyACM0.
 EOF

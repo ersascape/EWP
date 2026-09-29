@@ -111,7 +111,7 @@ Use a bounded network worker with cancellation, result events and a guaranteed r
 
 ### 11. Persistence and diagnostics need tightening
 
-- A coredump partition already exists in `huge_app.csv`, but flash core dumps are disabled. Enable and validate capture/decoding in a diagnostic build and retain the matching ELF. A saved `PANIC` reason alone cannot locate the crash.
+- The `ota_ab.csv` layout preserves the 64 KiB coredump partition. Flash core dumps are enabled; retain the matching ELF and decode the dump before another panic overwrites it. A saved `PANIC` reason alone cannot locate the crash.
 - Session uptime is checkpointed to NVS every five minutes. It is approximate and can miss the final interval; it is not measured battery endurance.
 - Recent-call enrichment rewrites multiple keys for the whole recent list. Batch/version these writes and avoid committing unchanged values.
 - `CONFIG no stored preferences` is emitted whenever opening the namespace fails. Log the actual storage failure separately from “not configured”; this message alone does not prove Wi-Fi credentials were erased.

@@ -13,6 +13,7 @@ enum class Item : uint8_t {
     Todo,
     Hotspot,
     Status,
+    Updater,
     Count
 };
 

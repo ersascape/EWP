@@ -52,6 +52,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(parser.parse_args(["--json", "power"]).json)
         self.assertTrue(parser.parse_args(["power", "cpu-freq-get", "--json"]).json)
 
+    def test_ota_status_has_a_concise_cli_form(self):
+        args = ewctl.build_parser().parse_args(["ota"])
+        self.assertEqual(args.operation, "ota")
+        self.assertEqual(ewctl.COMMANDS[args.operation], "ota.status")
+        boot = ewctl.build_parser().parse_args(["ota", "boot-other"])
+        self.assertEqual((boot.operation, boot.ota_action), ("ota", "boot-other"))
+
+    def test_dvfs_state_has_a_power_cli_form(self):
+        args = ewctl.build_parser().parse_args(["power", "get-dvfs-state"])
+        self.assertEqual((args.operation, args.power_action), ("power", "get-dvfs-state"))
+
     def test_flash_command_accepts_an_image_or_local_default(self):
         parser = ewctl.build_parser()
         self.assertEqual(parser.parse_args(["flash", "firmware.bin"]).target, "firmware.bin")

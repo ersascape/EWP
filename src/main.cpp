@@ -4,6 +4,7 @@
 #include "core/debug_log.h"
 #include "core/usb_control.h"
 #include "core/dvfs.h"
+#include "ersa/services/ota_service.h"
 #include "ui/watch_ui.h"
 
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
@@ -56,6 +57,7 @@ void setup() {
     WatchUi::begin();
     UsbControl::begin();
     DebugLog::log("BOOT ready");
+    ersa::services::OtaService::instance().begin();
 }
 
 void loop() {
@@ -64,5 +66,6 @@ void loop() {
     DebugLog::tick();
     UsbControl::tick();
     WatchUi::tick();
+    ersa::services::OtaService::instance().tick();
     delay(5);
 }

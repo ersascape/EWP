@@ -241,9 +241,11 @@ make firmware
 The firmware targets ESP32-C3 with Arduino as an ESP-IDF component. ESP-IDF owns
 project configuration and FreeRTOS power management. Tickless idle and Bluetooth
 modem sleep are enabled in `sdkconfig.defaults`; the application uses inactivity
-and peripheral activity to govern automatic light sleep. `huge_app.csv` preserves
-the current 4 MB flash layout. Battery runtime and exact sleep residency still
-need measurement on the assembled watch.
+and peripheral activity to govern automatic light sleep. `ota_ab.csv` reserves
+two equal app slots and rollback metadata while preserving the existing coredump
+region. The old SPIFFS region was unused and is reclaimed for OTA slot 1.
+Battery runtime and exact sleep residency still need measurement on the assembled
+watch.
 
 The generated firmware remains at `.pio/build/ErsaWearable/firmware.bin`. Run
 `make test` for the host-side protocol and service tests.
@@ -255,18 +257,21 @@ artifact. To publish downloadable firmware under **GitHub Releases**, push an
 project history is in [CHANGELOG.md](CHANGELOG.md):
 
 ```bash
-git tag ewp-0.1.2
-git push origin ewp-0.1.2
+git tag ewp-0.1.3
+git push origin ewp-0.1.3
 ```
 
-Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for
-factory flashing, checksums, and flashing instructions. Use `firmware.bin` for routine
-updates; it preserves saved Wi-Fi and watch settings. Factory flashing resets saved
-settings; see the attached `FLASHING.md` before using it.
+Each tagged release includes `firmware.bin`, `ewp-factory.bin`, migration
+components, checksums, and flashing instructions. Existing watches need a
+one-time partition migration before OTA updates can be used. The migration
+script preserves saved Wi-Fi and watch settings; factory flashing resets them.
+After migration, the updater app checks the signed HTTPS manifest, verifies the
+downloaded image hash, writes the inactive slot, and relies on bootloader
+rollback until the new firmware confirms stable startup. See `FLASHING.md`.
 
 ### 3. Flash to Device
-Download `ewp-factory.bin` from a GitHub Release, connect the Ampere Works T1E via
-USB-C, then run the one-command flasher:
+For a new watch, download `ewp-factory.bin` from a GitHub Release, connect the
+Ampere Works T1E via USB-C, then run the one-command flasher:
 
 ```bash
 ./scripts/flash_firmware.sh ~/Downloads/ewp-factory.bin
@@ -278,6 +283,19 @@ app image to preserve settings. If more than one port is available, pass it expl
 `./scripts/flash_firmware.sh ~/Downloads/ewp-factory.bin /dev/ttyACM0`. With no image
 argument it uses a locally packaged factory image, or falls back to the local build's
 `firmware.bin` app image. Factory flashing resets saved watch settings.
+
+For an existing watch, download `bootloader.bin`, `partitions.bin`,
+`boot_app0.bin`, `firmware.bin`, and `migrate_ota.sh` from the same release into
+one directory, then run the migration script. It preserves NVS settings but
+reclaims the unused SPIFFS region for the second app slot:
+
+```bash
+bash ./migrate_ota.sh . /dev/ttyACM0
+```
+
+Do not interrupt the migration. It updates the bootloader and partition table
+as well as the app image. This prepares the watch for rollback-capable OTA and
+the on-watch updater.
 
 ### 4. Serial Monitor
 ```bash
@@ -306,7 +324,7 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
 python3 scripts/ewctl.py --port /dev/ttyACM0 flash ~/Downloads/firmware.bin
-python3 scripts/ewctl.py --port /dev/ttyACM0 flash release 0.1.2
+python3 scripts/ewctl.py --port /dev/ttyACM0 flash release 0.1.3
 python3 scripts/ewctl.py --port /dev/ttyACM0 power log --interval 30 --duration 3600
 python3 scripts/ewctl.py --port /dev/ttyACM0 debug bundle
 python3 scripts/ewctl.py --port /dev/ttyACM0 debug coredump

@@ -1,5 +1,16 @@
 # Changelog
 
+## ewp-0.1.3
+
+- Added rollback-capable A/B slots, a one-time OTA partition migration, and the
+  `system update` screen with manifest-based HTTPS update checks and installs.
+- Added current/alternate slot state and bootability to `ewctl ota`, plus an
+  on-demand ESP-IDF DVFS residency report.
+- Changed the app drawer to four roomier entries without page counters and fixed
+  Arch package runtime dependency names.
+
+See [release notes](release-notes/ewp-0.1.3.md) for upgrade and asset details.
+
 ## ewp-0.1.2
 
 - Split the companion-provider contract (`ICompanionSource`) from BLE transport
