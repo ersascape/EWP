@@ -174,6 +174,9 @@ public:
     void handleNotification(const uint8_t* data, size_t size) {
         if (size != 8 || data[0] > 2) return;
         const uint32_t uid = protocols::readLe32(data + 4);
+        DebugLog::log("ANCS: notification event=%u flags=0x%02x category=%u uid=%08lx",
+                      unsigned(data[0]), unsigned(data[1]), unsigned(data[2]),
+                      static_cast<unsigned long>(uid));
         if (data[0] == 2) {
             for (auto& target : dismissTargets_) if (target.uid == uid) target = {};
             if (waiting_ && active_.uid == uid) active_.removed = true;
@@ -243,6 +246,9 @@ public:
         if (result != protocols::AncsAttributes::Result::Complete) return;
         waiting_ = false;
         if (active_.removed || !live()) return;
+        DebugLog::log("ANCS: attributes complete call=%u title_len=%u message_len=%u",
+                      unsigned(active_.call), unsigned(strlen(attributes_.title)),
+                      unsigned(strlen(attributes_.message)));
         if (active_.call) {
             if (call_.ringing && call_.uid == active_.uid && callCb_) {
                 const bool messageIsNumber = isPhoneNumberText(attributes_.message);

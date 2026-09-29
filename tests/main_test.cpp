@@ -624,6 +624,18 @@ void test_bluetooth_manager() {
     mockBle.simulateCallEnded();
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Name-only call end returns to recents");
 
+    mockBle.simulateIncomingCall("", "");
+    TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "unknown caller") == 0,
+                "Call is retained even if ANCS has not delivered caller attributes");
+    const size_t countBeforeCallerUpdate = bleMgr.getRecentCallCount();
+    mockBle.simulateIncomingCall("Bob", "+15559876");
+    TEST_ASSERT(bleMgr.getRecentCallCount() == countBeforeCallerUpdate,
+                "Late caller attributes enrich the pending recent instead of adding a duplicate");
+    TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Bob") == 0 &&
+                strcmp(bleMgr.getRecentCall(0).number, "+15559876") == 0,
+                "Late caller details replace the unknown recent entry");
+    mockBle.simulateCallEnded();
+
     // 8. Test Media Control & Updates
     mockBle.simulateMedia(true, "Starboy", "The Weeknd");
     TEST_ASSERT(bleMgr.isPlaying(), "Media state should be playing");

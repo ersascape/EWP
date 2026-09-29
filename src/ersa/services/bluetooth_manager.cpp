@@ -1,5 +1,6 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/services/storage_service.h"
+#include "core/debug_log.h"
 #include <string.h>
 
 #if defined(ARDUINO)
@@ -176,16 +177,21 @@ const RecentCall& BluetoothManager::getRecentCall(size_t index) const {
 void BluetoothManager::addRecentCall(const char* name, const char* number) {
     const bool hasName = name && name[0];
     const bool hasNumber = number && number[0];
-    if (!hasName && !hasNumber) return;
+    if (!hasName && !hasNumber) name = "unknown caller";
+    const bool effectiveName = name && name[0];
 
     // Merge an ANCS name-only event with a later phone-number update for the
     // same caller rather than consuming two slots in the recent list.
     const bool sameNumber = hasNumber && recentCount_ && recents_[0].number[0] &&
                             strcmp(recents_[0].number, number) == 0;
-    const bool enrichNameOnly = hasName && recentCount_ && !recents_[0].number[0] &&
+    const bool enrichNameOnly = effectiveName && recentCount_ && !recents_[0].number[0] &&
                                 strcmp(recents_[0].name, name) == 0;
-    if (sameNumber || enrichNameOnly) {
-        if (hasName) {
+    const bool enrichUnknown = effectiveName && recentCount_ &&
+                               !recents_[0].number[0] &&
+                               strcmp(recents_[0].name, "unknown caller") == 0 &&
+                               strcmp(name, "unknown caller") != 0;
+    if (sameNumber || enrichNameOnly || enrichUnknown) {
+        if (effectiveName) {
             strncpy(recents_[0].name, name, sizeof(recents_[0].name) - 1);
             recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
         }
@@ -198,7 +204,7 @@ void BluetoothManager::addRecentCall(const char* name, const char* number) {
         size_t copyLimit = (recentCount_ < MAX_RECENTS) ? recentCount_ : (MAX_RECENTS - 1);
         for (size_t i = copyLimit; i > 0; --i) recents_[i] = recents_[i - 1];
 
-        const char* displayName = hasName ? name : number;
+        const char* displayName = effectiveName ? name : number;
         strncpy(recents_[0].name, displayName, sizeof(recents_[0].name) - 1);
         recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
 
@@ -221,6 +227,10 @@ void BluetoothManager::addRecentCall(const char* name, const char* number) {
         snprintf(key, sizeof(key), "recent_time_%u", unsigned(i));
         storage.setInt(key, static_cast<int32_t>(recents_[i].timestampEpoch));
     }
+#if defined(ARDUINO)
+    DebugLog::log("CALL: recent saved count=%u has_name=%u has_number=%u",
+                  unsigned(recentCount_), unsigned(effectiveName), unsigned(hasNumber));
+#endif
 }
 
 void BluetoothManager::mediaPlay() {
@@ -253,8 +263,19 @@ void BluetoothManager::simulateMedia(const char* title, const char* artist, bool
 
 void BluetoothManager::receive(const events::Event& event) {
 #if defined(ARDUINO)
-    if (incomingQueue_ && xQueueSend(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE && wakeCallback_)
-        wakeCallback_(wakeUserData_);
+    if (incomingQueue_) {
+        if (xQueueSend(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE) {
+            if (wakeCallback_) wakeCallback_(wakeUserData_);
+        } else {
+#if defined(ARDUINO)
+            DebugLog::log("BLE: manager event queue full; dropping event type=%u", unsigned(event.type));
+#endif
+        }
+    } else {
+#if defined(ARDUINO)
+        DebugLog::log("BLE: manager event queue unavailable; dropping event type=%u", unsigned(event.type));
+#endif
+    }
 #else
     apply(event);
 #endif
@@ -277,11 +298,16 @@ void BluetoothManager::apply(const events::Event& event) {
             currentCaller_[sizeof(currentCaller_) - 1] = '\0';
             strncpy(currentNumber_, event.call.number, sizeof(currentNumber_) - 1);
             currentNumber_[sizeof(currentNumber_) - 1] = '\0';
-            if ((currentCaller_[0] || currentNumber_[0]) &&
-                (recentCount_ == 0 ||
-                 (currentNumber_[0] ? strcmp(recents_[0].number, currentNumber_) != 0
-                                    : strcmp(recents_[0].name, currentCaller_) != 0)))
-                addRecentCall(currentCaller_, currentNumber_);
+            if (currentCaller_[0] || currentNumber_[0]) {
+                if (recentCount_ == 0 ||
+                    (currentNumber_[0] ? strcmp(recents_[0].number, currentNumber_) != 0
+                                       : strcmp(recents_[0].name, currentCaller_) != 0))
+                    addRecentCall(currentCaller_, currentNumber_);
+            } else {
+                // ANCS can announce an incoming-call category before its
+                // caller attributes arrive, or without exposing them at all.
+                addRecentCall(nullptr, nullptr);
+            }
             break;
         case EventType::CallAccepted:
             callState_ = CallState::Active; callStartMs_ = millis(); break;
@@ -313,6 +339,10 @@ void BluetoothManager::apply(const events::Event& event) {
             }
             break;
         case EventType::NotificationReceived:
+#if defined(ARDUINO)
+            DebugLog::log("ANCS: notification attributes received uid=%08lx",
+                          static_cast<unsigned long>(event.notification.uid));
+#endif
             for (size_t i = 0; i < dismissedCount_; ++i)
                 if (dismissedUids_[i] == event.notification.uid) return;
             addNotification(event.notification.title, event.notification.message,
@@ -415,6 +445,12 @@ void BluetoothManager::onBleNotification(const char* title, const char* message,
 
     events::Event evt = events::Event::createNotification(title, message, app, uid, millis(), canDismissRemotely);
     if (!title && !message) evt.type = app ? events::EventType::NotificationRemoved : events::EventType::NotificationsCleared;
+    else {
+#if defined(ARDUINO)
+        DebugLog::log("ANCS: notification callback uid=%08lx dismiss=%u",
+                      static_cast<unsigned long>(uid), unsigned(canDismissRemotely));
+#endif
+    }
     self->receive(evt);
 }
 
