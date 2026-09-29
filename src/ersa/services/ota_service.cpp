@@ -205,6 +205,11 @@ bool isBootable(const esp_partition_t* partition) {
     esp_ota_img_states_t state;
     if (esp_ota_get_state_partition(partition, &state) == ESP_OK &&
         (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED)) return false;
+    // Avoid asking esp_image_verify() to parse an erased OTA slot. Besides
+    // being guaranteed unbootable, that emits an alarming invalid-magic log.
+    uint8_t magic = 0;
+    if (esp_partition_read(partition, 0, &magic, sizeof(magic)) != ESP_OK ||
+        magic != ESP_IMAGE_HEADER_MAGIC) return false;
     const esp_partition_pos_t position{partition->address, partition->size};
     esp_image_metadata_t metadata{};
     return esp_image_verify(ESP_IMAGE_VERIFY, &position, &metadata) == ESP_OK;
