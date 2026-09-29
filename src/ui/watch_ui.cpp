@@ -1,5 +1,5 @@
 #include "ui/watch_ui.h"
-#include "bsp/ampere_t1e/board_ampere_t1e.h"
+#include "bsp/terra/board_terra.h"
 #include "ersa/events/event_bus.h"
 #include "ersa/app/application_manager.h"
 #include "ersa/services/time_service.h"
@@ -26,7 +26,7 @@
 
 namespace {
 
-ersa::board::BoardAmpereT1e& board = ersa::board::BoardAmpereT1e::instance();
+ersa::board::BoardTerra& board = ersa::board::BoardTerra::instance();
 ersa::events::EventBus& eventBus = ersa::events::EventBus::instance();
 ersa::app::ApplicationManager& appManager = ersa::app::ApplicationManager::instance();
 
@@ -197,7 +197,7 @@ void renderCurrentApp() {
 } // namespace
 
 void WatchUi::begin() {
-    DebugLog::log("UI: initializing Ampere Works T1E board");
+    DebugLog::log("UI: initializing %s board", board.getDeviceInfo().name);
     uint8_t initOk = 0;
     uint8_t initDegraded = 0;
     uint8_t initFailed = 0;

@@ -9,6 +9,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include "hal/esp32/esp32_apple_ble.h"
+#include "ersa/board/board.h"
 #include "core/debug_log.h"
 
 #define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
@@ -212,8 +213,11 @@ Result<void> Esp32Bluetooth::init() {
     if (pImpl_->initialized_) {
         return Result<void>();
     }
-    DebugLog::log("BLE: initializing 'Ersa Wearable' BLE peripheral");
-    BLEDevice::init("Ersa Wearable");
+    const auto* selectedBoard = ersa::board::Board::currentOrNull();
+    if (!selectedBoard) return Result<void>(ErrorCode::NotFound, "selected board identity is unavailable");
+    const auto& identity = selectedBoard->getDeviceInfo();
+    DebugLog::log("BLE: initializing '%s' BLE peripheral", identity.name);
+    BLEDevice::init(identity.name);
     Impl::current() = pImpl_;
     BLEDevice::setCustomGapHandler(&Impl::gapEvent);
 
@@ -259,10 +263,10 @@ Result<void> Esp32Bluetooth::init() {
     BLEService* pDisService = pImpl_->pServer_->createService(BLEUUID((uint16_t)0x180A));
     BLECharacteristic* pMfrChar = pDisService->createCharacteristic(
         BLEUUID((uint16_t)0x2A29), BLECharacteristic::PROPERTY_READ);
-    pMfrChar->setValue("Ersa");
+    pMfrChar->setValue(identity.manufacturer);
     BLECharacteristic* pModelChar = pDisService->createCharacteristic(
         BLEUUID((uint16_t)0x2A24), BLECharacteristic::PROPERTY_READ);
-    pModelChar->setValue("T1E Wearable");
+    pModelChar->setValue(identity.name);
     BLECharacteristic* pFwChar = pDisService->createCharacteristic(
         BLEUUID((uint16_t)0x2A26), BLECharacteristic::PROPERTY_READ);
     pFwChar->setValue("1.0.0");
@@ -347,9 +351,9 @@ void Esp32Bluetooth::beginAdvertising() {
     advData.addData(std::string(solData, 2) + std::string(reinterpret_cast<const char*>(ancsUUID.getNative()->uuid.uuid128), 16));
     pAdvertising->setAdvertisementData(advData);
 
-    // Scan Response Data: Full device name ("Ersa Wearable") + 16-bit Service UUID (19 bytes <= 31 max)
+    // Scan response advertises the board-provided device name and custom service.
     BLEAdvertisementData scanResponse;
-    scanResponse.setName("Ersa Wearable");
+    scanResponse.setName(getDeviceName());
     scanResponse.setCompleteServices(BLEUUID((uint16_t)0xFFE0));
     pAdvertising->setScanResponseData(scanResponse);
 
@@ -388,7 +392,8 @@ uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t nowMs) const {
 }
 
 const char* Esp32Bluetooth::getDeviceName() const {
-    return "Ersa Wearable";
+    const auto* board = ersa::board::Board::currentOrNull();
+    return board ? board->getDeviceInfo().name : "Unknown Device";
 }
 
 const char* Esp32Bluetooth::getDeviceAddress() const {
@@ -570,7 +575,10 @@ bool Esp32Bluetooth::isAdvertising() const { return false; }
 uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t) const { return UINT32_MAX; }
 void Esp32Bluetooth::tick() {}
 void Esp32Bluetooth::beginAdvertising() {}
-const char* Esp32Bluetooth::getDeviceName() const { return "Ersa Wearable"; }
+const char* Esp32Bluetooth::getDeviceName() const {
+    const auto* board = ersa::board::Board::currentOrNull();
+    return board ? board->getDeviceInfo().name : "Unknown Device";
+}
 const char* Esp32Bluetooth::getDeviceAddress() const { return "24:DC:C3:01:23:45"; }
 
 const char* Esp32Bluetooth::sourceId() const { return "none"; }

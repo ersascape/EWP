@@ -1,24 +1,26 @@
 #if defined(ARDUINO)
 
-#include "bsp/ampere_t1e/board_ampere_t1e.h"
+#include "bsp/terra/board_terra.h"
 #include "board_pins.h"
 #include <Arduino.h>
 
 namespace ersa {
 namespace board {
 
-BoardAmpereT1e& BoardAmpereT1e::instance() {
-    static BoardAmpereT1e s_board;
+const DeviceInfo& terraDeviceInfo();
+
+BoardTerra& BoardTerra::instance() {
+    static BoardTerra s_board;
     return s_board;
 }
 
-BoardAmpereT1e::BoardAmpereT1e()
+BoardTerra::BoardTerra()
     : display_(Pins::EPD_CS, Pins::EPD_DC, Pins::EPD_RST, Pins::EPD_BUSY,
                Pins::SCK, Pins::MISO, Pins::MOSI),
       rtc_(Pins::SDA, Pins::SCL),
       battery_(Pins::BATTERY_ADC),
       input_(Pins::BUTTON_1, Pins::BUTTON_2) {
-    config_.name = "Ampere Works T1E";
+    config_.name = getDeviceInfo().name;
     config_.capabilities.wifi = true;
     config_.capabilities.bluetooth = true;
     config_.capabilities.rtc = true;
@@ -46,7 +48,11 @@ BoardAmpereT1e::BoardAmpereT1e()
     config_.pins.batteryAdc = Pins::BATTERY_ADC;
 }
 
-Result<void> BoardAmpereT1e::init() {
+const DeviceInfo& BoardTerra::getDeviceInfo() const {
+    return terraDeviceInfo();
+}
+
+Result<void> BoardTerra::init() {
     Board::setCurrent(this);
     // The board owns construction and pin mapping. Service managers initialize
     // RTC, display, battery and BLE in the system boot sequence; initializing
@@ -54,11 +60,11 @@ Result<void> BoardAmpereT1e::init() {
     return input_.init();
 }
 
-uint32_t BoardAmpereT1e::getUptimeMs() const {
+uint32_t BoardTerra::getUptimeMs() const {
     return millis();
 }
 
-void BoardAmpereT1e::delayMs(uint32_t ms) {
+void BoardTerra::delayMs(uint32_t ms) {
     delay(ms);
 }
 

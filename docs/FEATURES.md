@@ -92,6 +92,11 @@ integrations and calls out areas that still need measurements on the watch.
   database over HTTPS. Tagged releases attach the package and matching
   `ersa-ewctl.db` and `ersa-ewctl.files` assets. Build locally with `makepkg -si`
   if preferred.
+- Each board's `DeviceInfo` supplies its display name, codename, and
+  manufacturer. `ewctl status`, BLE advertising, and OTA all use the selected
+  BSP's properties. OTA stores the latest manifest at
+  `ota/<codename>/ota.json` and images at `firmware/<codename>/<tag>.bin`;
+  Terra (`Ampere Terra`) currently publishes at `ota/terra/ota.json`.
 - The OTA service checks a compact HTTPS manifest, verifies release metadata
   and SHA-256, and installs to the inactive app slot. Bootloader rollback
   protects the previous image until the new firmware confirms startup. Existing

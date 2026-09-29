@@ -195,7 +195,7 @@ Ersa-W1/
 │   │   ├── app_todo.*             # CalDAV to-do checklist
 │   │   └── apps_registry.*        # App registration & EWP bridge
 │   ├── bsp/
-│   │   └── ampere_t1e/            # Ampere Works T1E board support package
+│   │   └── terra/                 # Ampere Works T1E board support package
 │   ├── core/
 │   │   ├── battery.*              # ADC voltage & battery curve calculations
 │   │   ├── buttons.*              # OneButton debounce & event dispatcher
@@ -265,8 +265,8 @@ Each tagged release includes `firmware.bin`, `ewp-factory.bin`, migration
 components, checksums, and flashing instructions. Existing watches need a
 one-time partition migration before OTA updates can be used. The migration
 script preserves saved Wi-Fi and watch settings; factory flashing resets them.
-After migration, the updater app checks the signed HTTPS manifest, verifies the
-downloaded image hash, writes the inactive slot, and relies on bootloader
+After migration, the updater app checks its codename-scoped HTTPS manifest,
+verifies device identity and the downloaded image hash, writes the inactive slot, and relies on bootloader
 rollback until the new firmware confirms stable startup. See `FLASHING.md`.
 
 ### 3. Flash to Device

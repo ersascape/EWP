@@ -12,12 +12,19 @@
 namespace ersa {
 namespace board {
 
+struct DeviceInfo {
+    const char* name;
+    const char* codename;
+    const char* manufacturer;
+};
+
 class Board {
 public:
     virtual ~Board() = default;
 
     virtual Result<void> init() = 0;
     virtual const char* getName() const = 0;
+    virtual const DeviceInfo& getDeviceInfo() const = 0;
     virtual const BoardConfig& getConfig() const = 0;
 
     const BoardCapabilities& capabilities() const {
@@ -35,6 +42,7 @@ public:
     virtual void delayMs(uint32_t ms) = 0;
 
     static Board& current();
+    static Board* currentOrNull();
     static void setCurrent(Board* board);
 };
 

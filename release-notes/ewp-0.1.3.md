@@ -10,7 +10,9 @@ and live ESP-IDF power-residency reporting through `ewctl`.
 - Added a compact `system update` app to check for releases, install an update,
   view the running and alternate slots, and boot a valid alternate image.
 - Added a manifest-based OTA flow hosted at `https://pkgs-wearables.ersa.dev/`.
-  It verifies HTTPS, image metadata, size, and SHA-256 before selecting the
+  The selected board codename determines its manifest and image paths; the
+  Ampere Terra (`terra`) uses `/ota/terra/ota.json`. Firmware identity,
+  HTTPS, image metadata, size, and SHA-256 are checked before selecting the
   inactive slot. New firmware confirms stable startup before rollback is
   disabled.
 - Updated the app drawer to show four roomier entries without page counters.

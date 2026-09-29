@@ -3,6 +3,7 @@
 
 #include "core/debug_log.h"
 #include "core/watch_config.h"
+#include "ersa/board/board.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
@@ -20,7 +21,7 @@ namespace ersa {
 namespace services {
 namespace {
 constexpr uint32_t BOOT_CONFIRM_DELAY_MS = 30000;
-constexpr char OTA_MANIFEST_URL[] = "https://pkgs-wearables.ersa.dev/ota.json";
+constexpr char OTA_BASE_URL[] = "https://pkgs-wearables.ersa.dev";
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 constexpr size_t MANIFEST_LIMIT = 768;
 
@@ -31,6 +32,9 @@ struct ManifestBuffer {
 };
 
 struct OtaManifest {
+    char deviceName[48]{};
+    char codename[32]{};
+    char manufacturer[48]{};
     char tag[32]{};
     char version[32]{};
     char firmwareUrl[192]{};
@@ -68,8 +72,12 @@ bool jsonString(const char* json, const char* key, char* output, size_t capacity
 
 bool fetchManifest(OtaManifest& manifest) {
     ManifestBuffer body;
+    const auto& identity = board::Board::current().getDeviceInfo();
+    char manifestUrl[192];
+    snprintf(manifestUrl, sizeof(manifestUrl), "%s/ota/%s/ota.json", OTA_BASE_URL,
+             identity.codename);
     esp_http_client_config_t config{};
-    config.url = OTA_MANIFEST_URL;
+    config.url = manifestUrl;
     config.timeout_ms = 15000;
     config.buffer_size = 512;
     config.cert_pem = kErsaOtaRootCa;
@@ -85,6 +93,9 @@ bool fetchManifest(OtaManifest& manifest) {
         return false;
     }
     if (!strstr(body.data, "\"schema\":1") ||
+        !jsonString(body.data, "device_name", manifest.deviceName, sizeof(manifest.deviceName)) ||
+        !jsonString(body.data, "codename", manifest.codename, sizeof(manifest.codename)) ||
+        !jsonString(body.data, "manufacturer", manifest.manufacturer, sizeof(manifest.manufacturer)) ||
         !jsonString(body.data, "tag", manifest.tag, sizeof(manifest.tag)) ||
         !jsonString(body.data, "version", manifest.version, sizeof(manifest.version)) ||
         !jsonString(body.data, "firmware_url", manifest.firmwareUrl, sizeof(manifest.firmwareUrl)) ||
@@ -94,8 +105,12 @@ bool fetchManifest(OtaManifest& manifest) {
     for (const char* p = manifest.sha256; *p; ++p)
         if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) return false;
     char expectedUrl[192];
-    snprintf(expectedUrl, sizeof(expectedUrl), "https://pkgs-wearables.ersa.dev/firmware/%s.bin", manifest.tag);
-    if (strncmp(manifest.tag, "ewp-", 4) != 0 || strcmp(expectedUrl, manifest.firmwareUrl) != 0 ||
+    snprintf(expectedUrl, sizeof(expectedUrl), "%s/firmware/%s/%s.bin", OTA_BASE_URL,
+             identity.codename, manifest.tag);
+    if (strcmp(manifest.deviceName, identity.name) != 0 ||
+        strcmp(manifest.codename, identity.codename) != 0 ||
+        strcmp(manifest.manufacturer, identity.manufacturer) != 0 ||
+        strncmp(manifest.tag, "ewp-", 4) != 0 || strcmp(expectedUrl, manifest.firmwareUrl) != 0 ||
         strcmp(manifest.tag, manifest.version) != 0) return false;
 
     const char* sizeField = strstr(body.data, "\"size\":");

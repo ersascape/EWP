@@ -44,9 +44,10 @@ Each board target lives in its own subdirectory under `src/bsp/`:
 
 ```
 src/bsp/
-├── ampere_t1e/                   # Reference BSP (Ampere Works T1E)
-│   ├── board_ampere_t1e.h
-│   └── board_ampere_t1e.cpp
+├── terra/                         # Reference BSP (watch name: Ampere Terra)
+│   ├── board_terra.h
+│   ├── board_terra.cpp
+│   └── device_info.cpp            # DeviceInfo: name, codename, manufacturer
 └── <your_board_name>/            # Your new board BSP
     ├── board_<your_board>.h
     └── board_<your_board>.cpp

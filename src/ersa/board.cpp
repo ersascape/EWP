@@ -9,6 +9,10 @@ Board& Board::current() {
     return *s_currentBoard;
 }
 
+Board* Board::currentOrNull() {
+    return s_currentBoard;
+}
+
 void Board::setCurrent(Board* board) {
     s_currentBoard = board;
 }

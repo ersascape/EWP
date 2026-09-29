@@ -13,13 +13,14 @@
 namespace ersa {
 namespace board {
 
-class BoardAmpereT1e : public Board {
+class BoardTerra : public Board {
 public:
-    BoardAmpereT1e();
-    ~BoardAmpereT1e() override = default;
+    BoardTerra();
+    ~BoardTerra() override = default;
 
     Result<void> init() override;
-    const char* getName() const override { return "Ampere Works T1E"; }
+    const char* getName() const override { return getDeviceInfo().name; }
+    const DeviceInfo& getDeviceInfo() const override;
     const BoardConfig& getConfig() const override { return config_; }
 
     hal::IDisplay& getDisplay() override { return display_; }
@@ -36,7 +37,7 @@ public:
     uint32_t getUptimeMs() const override;
     void delayMs(uint32_t ms) override;
 
-    static BoardAmpereT1e& instance();
+    static BoardTerra& instance();
 
 private:
     BoardConfig config_;

@@ -1,4 +1,5 @@
 #include "ersa/services/bluetooth_manager.h"
+#include "ersa/board/board.h"
 #include "ersa/services/storage_service.h"
 #include "core/debug_log.h"
 #include "core/dvfs.h"
@@ -42,7 +43,7 @@ public:
     void stopAdvertising() override {}
     bool isConnected() const override { return false; }
     void setConnectionCallback(hal::BleConnectionCallback, void*) override {}
-    const char* getDeviceName() const override { return "Ersa Wearable"; }
+    const char* getDeviceName() const override { return "Unknown Device"; }
     const char* getDeviceAddress() const override { return "00:00:00:00:00:00"; }
 };
 

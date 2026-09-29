@@ -5,6 +5,7 @@
 #include "ersa/app/application_manager.h"
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/services/power_manager.h"
+#include "ersa/board/board.h"
 #include <Arduino.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -269,8 +270,10 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
     if (strcmp(command, "system.status") == 0) {
         const auto* app = ersa::app::ApplicationManager::instance().getActiveApp();
         const char* appId = app ? app->getId() : "none";
+        const auto& device = ersa::board::Board::current().getDeviceInfo();
         char data[RESPONSE_LIMIT];
-        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"build\":\"%s %s\",\"running_slot\":\"%s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
+        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"device_name\":\"%s\",\"codename\":\"%s\",\"manufacturer\":\"%s\",\"build\":\"%s %s\",\"running_slot\":\"%s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
+                 device.name, device.codename, device.manufacturer,
                  __DATE__, __TIME__, otaSlotName(esp_ota_get_running_partition()), static_cast<unsigned long>(millis() / 1000), DebugLog::resetReasonName(), appId,
                  static_cast<unsigned long>(ESP.getFreeHeap()), powerStateName(power.getState()), power.canSleep() ? "true" : "false");
         sendReply(id, true, nullptr, nullptr, data);
