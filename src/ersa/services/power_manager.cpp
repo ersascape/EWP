@@ -138,6 +138,29 @@ void PowerManager::tick(uint32_t currentUptimeMs) {
         const bool conn = battery_.isConnected();
         const bool chg = battery_.isCharging();
 
+        if (conn) {
+            const bool critical = (mv <= CRITICAL_BATTERY_MV || pct <= CRITICAL_BATTERY_PERCENT);
+            if (critical) {
+                if (criticalSampleCount_ < 3) ++criticalSampleCount_;
+                if (criticalSampleCount_ >= 3) {
+                    batteryPowerLevel_ = BatteryPowerLevel::Critical;
+                }
+            } else {
+                criticalSampleCount_ = 0;
+                if (batteryPowerLevel_ == BatteryPowerLevel::Critical &&
+                    mv < 3550 && pct < 8) {
+                    // Keep critical latched until the cell has clearly recovered.
+                } else if (mv <= LOW_BATTERY_MV || pct <= LOW_BATTERY_PERCENT) {
+                    batteryPowerLevel_ = BatteryPowerLevel::Low;
+                } else if (mv >= 3700 && pct >= 24) {
+                    batteryPowerLevel_ = BatteryPowerLevel::Normal;
+                }
+            }
+        } else {
+            criticalSampleCount_ = 0;
+            batteryPowerLevel_ = BatteryPowerLevel::Normal;
+        }
+
         if (mv != cachedMv_ || pct != cachedPercent_ || conn != cachedConnected_ || chg != cachedCharging_) {
             cachedMv_ = mv;
             cachedPercent_ = pct;
@@ -163,6 +186,10 @@ bool PowerManager::isBatteryConnected() const {
 
 bool PowerManager::isCharging() const {
     return cachedCharging_;
+}
+
+BatteryPowerLevel PowerManager::getBatteryPowerLevel() const {
+    return batteryPowerLevel_;
 }
 
 PowerState PowerManager::getState() const {

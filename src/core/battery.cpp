@@ -10,47 +10,60 @@ namespace {
 uint16_t cachedMv = 0;
 uint8_t cachedPercent = 100;
 bool connected = false;
+bool hasVoltageSample = false;
 uint32_t lastSampleTime = 0;
 
 uint8_t mvToPercent(uint16_t mv) {
-    if (mv >= 4200) return 100;
-    if (mv <= 3500) return 0;
-    if (mv >= 4050) return 90 + ((mv - 4050) * 10) / 150;
-    if (mv >= 3920) return 75 + ((mv - 3920) * 15) / 130;
-    if (mv >= 3820) return 50 + ((mv - 3820) * 25) / 100;
-    if (mv >= 3740) return 25 + ((mv - 3740) * 25) / 80;
-    if (mv >= 3650) return 10 + ((mv - 3650) * 15) / 90;
-    return ((mv - 3500) * 10) / 150;
+    // Approximate resting-voltage curve for a single Li-ion/LiPo cell.
+    // It is intentionally a LUT so board/cell calibration can be substituted.
+    static constexpr uint16_t mvPoints[] = {3300, 3500, 3600, 3700, 3750,
+                                              3800, 3850, 3900, 4000, 4100, 4200};
+    static constexpr uint8_t pctPoints[] = {0, 2, 5, 12, 25, 42, 58, 72, 88, 96, 100};
+    constexpr size_t count = sizeof(mvPoints) / sizeof(mvPoints[0]);
+    if (mv <= mvPoints[0]) return pctPoints[0];
+    if (mv >= mvPoints[count - 1]) return pctPoints[count - 1];
+    for (size_t i = 1; i < count; ++i) {
+        if (mv <= mvPoints[i]) {
+            const uint16_t spanMv = mvPoints[i] - mvPoints[i - 1];
+            const uint8_t spanPct = pctPoints[i] - pctPoints[i - 1];
+            return pctPoints[i - 1] + ((mv - mvPoints[i - 1]) * spanPct) / spanMv;
+        }
+    }
+    return 0;
 }
 
 void sample() {
     uint32_t sumMv = 0;
-    constexpr uint8_t SAMPLES = 16;
+    constexpr uint8_t SAMPLES = 24;
     for (uint8_t i = 0; i < SAMPLES; ++i) {
         sumMv += analogReadMilliVolts(Pins::BATTERY_ADC);
-        delayMicroseconds(50);
+        delayMicroseconds(500);
     }
     const uint32_t rawMv = sumMv / SAMPLES;
 
     // Assuming standard 1:1 (half-voltage) divider: V_batt = V_adc * 2
     const uint32_t battMv = rawMv * 2;
 
-    if (battMv >= 2800 && battMv <= 4500) {
+    if (battMv >= 2500 && battMv <= 4500) {
         connected = true;
-        cachedMv = battMv;
+        // Smooth load-related sag/noise between periodic samples. First sample
+        // initializes directly so boot diagnostics are useful immediately.
+        cachedMv = hasVoltageSample ? (cachedMv * 3U + battMv) / 4U : battMv;
+        hasVoltageSample = true;
         cachedPercent = mvToPercent(cachedMv);
     } else {
-        // Divider not present on GPIO2, or running on pure USB without divider
+        // Invalid/out-of-range ADC indicates no usable battery measurement.
         connected = false;
         cachedMv = battMv;
-        cachedPercent = 100;
+        cachedPercent = 0;
+        hasVoltageSample = false;
     }
 }
 } // namespace
 
 void begin() {
     pinMode(Pins::BATTERY_ADC, INPUT);
-    analogSetAttenuation(ADC_11db); // Full 0 - 2.5V ADC range
+    analogSetPinAttenuation(Pins::BATTERY_ADC, ADC_11db);
     sample();
     DebugLog::log("BATTERY init: raw_mv=%u connected=%d pct=%u%%",
                   cachedMv, connected, cachedPercent);

@@ -16,6 +16,12 @@ enum class PowerState : uint8_t {
     DeepSleep
 };
 
+enum class BatteryPowerLevel : uint8_t {
+    Normal = 0,
+    Low,
+    Critical
+};
+
 class PowerManager;
 
 class WakeLock {
@@ -41,6 +47,10 @@ public:
     static constexpr size_t MAX_WAKE_LOCKS = 16;
     static constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 10000;
     static constexpr uint32_t DEEP_SLEEP_TIMEOUT_MS = 60000;
+    static constexpr uint8_t LOW_BATTERY_PERCENT = 20;
+    static constexpr uint16_t LOW_BATTERY_MV = 3600;
+    static constexpr uint8_t CRITICAL_BATTERY_PERCENT = 3;
+    static constexpr uint16_t CRITICAL_BATTERY_MV = 3350;
 
     explicit PowerManager(hal::IBattery& battery, events::EventBus& bus = events::EventBus::instance());
 
@@ -61,6 +71,7 @@ public:
     uint8_t getBatteryPercent() const;
     bool isBatteryConnected() const;
     bool isCharging() const;
+    BatteryPowerLevel getBatteryPowerLevel() const;
 
     PowerState getState() const;
     void requestState(PowerState state);
@@ -84,6 +95,8 @@ private:
     uint8_t cachedPercent_{100};
     bool cachedConnected_{false};
     bool cachedCharging_{false};
+    BatteryPowerLevel batteryPowerLevel_{BatteryPowerLevel::Normal};
+    uint8_t criticalSampleCount_{0};
 
     const char* wakeLockTags_[MAX_WAKE_LOCKS];
     size_t activeWakeLocks_{0};

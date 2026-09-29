@@ -16,6 +16,7 @@ TEST_SRCS = \
 	src/ersa/services/logging_service.cpp \
 	src/ersa/services/settings_service.cpp \
 	src/ersa/services/bluetooth_manager.cpp \
+	src/ersa/services/session_stats.cpp \
 	src/ersa/board.cpp
 
 TEST_BIN = tests/run_tests

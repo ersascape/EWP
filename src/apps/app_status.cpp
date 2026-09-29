@@ -4,6 +4,7 @@
 #include "core/battery.h"
 #include "core/net_sync.h"
 #include "ersa/services/bluetooth_manager.h"
+#include "ersa/services/session_stats.h"
 #include "ui/text_layout.h"
 #include "fonts/misans_fonts.h"
 #include "ersa/config/ui_strings.h"
@@ -68,6 +69,20 @@ void render(Adafruit_GFX& display) {
     display.print("sync");
     display.setCursor(valX, startY + rowHeight * 5);
     WatchText::line(display, NetSync::lastStatus(), valX, startY + rowHeight * 5, 98);
+
+    const uint32_t lastSessionSec = ersa::services::SessionStats::previousSessionUptimeSeconds();
+    display.setCursor(leftX, startY + rowHeight * 6);
+    display.print("last uptime");
+    char uptimeBuf[24];
+    if (!lastSessionSec) {
+        snprintf(uptimeBuf, sizeof(uptimeBuf), "none yet");
+    } else if (lastSessionSec >= 3600) {
+        snprintf(uptimeBuf, sizeof(uptimeBuf), "~%uh %um", unsigned(lastSessionSec / 3600),
+                 unsigned((lastSessionSec % 3600) / 60));
+    } else {
+        snprintf(uptimeBuf, sizeof(uptimeBuf), "~%um", unsigned(lastSessionSec / 60));
+    }
+    WatchText::line(display, uptimeBuf, valX, startY + rowHeight * 6, 98);
 
     // Clean footer
     WatchText::line(display, ble.isConnected() ? "ble connected" : "b1: reconnect ble", leftX, 168, 166);
