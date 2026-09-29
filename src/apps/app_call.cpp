@@ -135,11 +135,9 @@ void render(Adafruit_GFX& display) {
         const uint32_t seconds = ble.getCallDurationSec();
         snprintf(duration, sizeof(duration), "%02u:%02u", unsigned(seconds / 60), unsigned(seconds % 60));
         WatchText::line(display, duration, 18, 153, 164);
-    } else if (state == CallState::Incoming) {
-        WatchText::line(display, "b1: menu", 18, 153, 164);
     }
     if (state == CallState::Incoming) {
-        WatchText::line(display, "b1: menu", 18, 168, 166);
+        WatchText::line(display, "b1: accept", 18, 168, 166);
         WatchText::line(display, "b2: decline", 18, 186, 166);
     } else if (state == CallState::Active) {
         WatchText::line(display, ble.canHangup() ? "b2: end call" : "manage call on phone", 18, 168, 166);
