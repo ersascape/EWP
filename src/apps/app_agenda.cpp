@@ -3,12 +3,17 @@
 #include "core/debug_log.h"
 #include "fonts/misans_fonts.h"
 #include "ersa/config/ui_strings.h"
+#include "ui/text_layout.h"
 #include <Arduino.h>
+#include <string.h>
 
 namespace AppAgenda {
 
 namespace {
 size_t pageOffset = 0;
+constexpr size_t PAGE_SIZE = 2;
+constexpr int16_t LEFT = 18;
+constexpr int16_t RIGHT = 182;
 
 void drawRight(Adafruit_GFX& display, const char* text, int16_t rightX, int16_t y, const GFXfont* font) {
     display.setFont(font);
@@ -28,9 +33,8 @@ void begin() {
 bool onButton(Buttons::Event event) {
     const size_t total = NetSync::eventCount();
     if (event == Buttons::Event::Next) {
-        // B1 = SCROLL through event cards
-        if (total > 2) {
-            pageOffset = (pageOffset + 2 < total) ? (pageOffset + 2) : 0;
+        if (total > PAGE_SIZE) {
+            pageOffset = pageOffset + PAGE_SIZE < total ? pageOffset + PAGE_SIZE : 0;
             return true;
         }
         return false;
@@ -43,76 +47,65 @@ bool onButton(Buttons::Event event) {
 }
 
 void render(Adafruit_GFX& display, const DateTime& now, bool full) {
-    (void)now;
     (void)full;
     display.fillScreen(0);   // Solid black
     display.setTextColor(1); // White
-
-    // Clean minimal footer
-    display.setFont(&MiSansLatin_Regular8pt7b);
-    display.setCursor(18, 186);
     const size_t total = NetSync::eventCount();
-    display.print((total == 0) ? ersa::strings::NAV_AGENDA_EMPTY_FOOT : ersa::strings::NAV_AGENDA_FOOTER);
+    if (pageOffset >= total) pageOffset = 0;
 
-    display.setTextColor(1);
-
-    // Clean lowercase header
+    // Keep the heading and date in separate, measured areas.
     display.setFont(&MiSansLatin_Bold10pt7b);
-    display.setCursor(18, 24);
+    display.setCursor(LEFT, 24);
     display.print(ersa::strings::APP_TITLE_AGENDA);
 
-    if (total > 0) {
-        char countBuf[16];
-        snprintf(countBuf, sizeof(countBuf), "%u of %u",
-                 unsigned(pageOffset + 1), unsigned(total));
-        drawRight(display, countBuf, 184, 24, &MiSansLatin_Regular8pt7b);
-    } else {
-        drawRight(display, NetSync::lastStatus(), 184, 24, &MiSansLatin_Regular8pt7b);
-    }
+    static constexpr const char* DAYS[] = {"sun", "mon", "tue", "wed", "thu", "fri", "sat"};
+    static constexpr const char* MONTHS[] = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec"
+    };
+    char date[24];
+    snprintf(date, sizeof(date), "%s %u %s", DAYS[now.dayOfTheWeek() % 7],
+             unsigned(now.day()), MONTHS[(now.month() >= 1 && now.month() <= 12) ? now.month() - 1 : 0]);
+    drawRight(display, date, RIGHT, 24, &MiSansLatin_Regular8pt7b);
+    display.drawFastHLine(LEFT, 33, RIGHT - LEFT, 1);
 
     if (total == 0) {
-        display.setFont(&MiSansLatin_Regular10pt7b);
-        display.setCursor(18, 70);
+        display.setFont(&MiSansLatin_Bold10pt7b);
+        display.setCursor(LEFT, 78);
         display.print(ersa::strings::MSG_NO_EVENTS_TODAY);
 
         display.setFont(&MiSansLatin_Regular8pt7b);
-        display.setCursor(18, 96);
+        display.setCursor(LEFT, 101);
         display.print(ersa::strings::MSG_PRESS_SYNC_CALDAV);
-        return;
+        if (NetSync::lastStatus()[0] != '\0' && strcmp(NetSync::lastStatus(), "Ready") != 0) {
+            WatchText::line(display, NetSync::lastStatus(), LEFT, 127, RIGHT - LEFT);
+        }
+    } else {
+        const size_t pageEnd = (pageOffset + PAGE_SIZE < total) ? pageOffset + PAGE_SIZE : total;
+        char pageLabel[20];
+        snprintf(pageLabel, sizeof(pageLabel), "%u-%u / %u",
+                 unsigned(pageOffset + 1), unsigned(pageEnd), unsigned(total));
+        drawRight(display, pageLabel, RIGHT, 47, &MiSansLatin_Regular8pt7b);
+
+        constexpr int16_t ROW_TOPS[PAGE_SIZE] = {54, 108};
+        for (size_t i = 0; i < PAGE_SIZE; ++i) {
+            const size_t idx = pageOffset + i;
+            if (idx >= total) break;
+            const auto& ev = NetSync::getEvent(idx);
+
+            display.setFont(&MiSansLatin_Bold8pt7b);
+            display.setCursor(LEFT, ROW_TOPS[i] + 11);
+            display.print(ev.timeStr[0] != '\0' ? ev.timeStr : "all day");
+            display.setFont(&MiSansLatin_Regular10pt7b);
+            WatchText::line(display, ev.title, LEFT, ROW_TOPS[i] + 34, RIGHT - LEFT);
+            display.drawFastHLine(LEFT, ROW_TOPS[i] + 44, RIGHT - LEFT, 1);
+        }
     }
 
-    if (pageOffset >= total) pageOffset = 0;
-
-    constexpr int16_t cardWidth = 172;
-    constexpr int16_t cardHeight = 52;
-    constexpr int16_t cardX = 14;
-
-    for (size_t i = 0; i < 2; ++i) {
-        const size_t idx = pageOffset + i;
-        if (idx >= total) break;
-
-        const int16_t cardY = 42 + i * 58;
-        const auto& ev = NetSync::getEvent(idx);
-
-        // Crisp white rounded card outline
-        display.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 4, 1);
-        // Accent bar on left edge
-        display.fillRoundRect(cardX + 2, cardY + 3, 3, cardHeight - 6, 1, 1);
-
-        // Event Time in bold
-        display.setFont(&MiSansLatin_Bold10pt7b);
-        display.setCursor(cardX + 12, cardY + 20);
-        display.print(ev.timeStr[0] != '\0' ? ev.timeStr : "all day");
-
-        // Event Title in regular
-        char titleBuf[20];
-        strncpy(titleBuf, ev.title, sizeof(titleBuf) - 1);
-        titleBuf[sizeof(titleBuf) - 1] = '\0';
-
-        display.setFont(&MiSansLatin_Regular10pt7b);
-        display.setCursor(cardX + 12, cardY + 42);
-        display.print(titleBuf);
-    }
+    display.setFont(&MiSansLatin_Regular8pt7b);
+    display.setCursor(LEFT, 186);
+    display.print(total > PAGE_SIZE ? ersa::strings::NAV_AGENDA_FOOTER
+                                    : ersa::strings::NAV_AGENDA_EMPTY_FOOT);
 }
 
 } // namespace AppAgenda

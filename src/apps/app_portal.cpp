@@ -170,7 +170,7 @@ void handleSave() {
 
     if (syncNow) {
         delay(1000);
-        AppPortal::onButton(Buttons::Event::Action); // Stop AP
+        AppPortal::stop();
         NetSync::syncNtp();
     }
 }
@@ -178,7 +178,7 @@ void handleSave() {
 void handleStop() {
     server.send(200, "text/html", "<html><body style='font-family:sans-serif;text-align:center;padding:40px;'><h2>Hotspot Stopped</h2><p>You may close this tab.</p></body></html>");
     delay(500);
-    AppPortal::onButton(Buttons::Event::Action); // Stop AP
+    AppPortal::stop();
 }
 
 void startAp() {
@@ -221,6 +221,10 @@ bool isActive() {
     return apRunning;
 }
 
+void stop() {
+    if (apRunning) stopAp();
+}
+
 void tick() {
     if (!apRunning) return;
 
@@ -238,14 +242,14 @@ void tick() {
 bool onButton(Buttons::Event event) {
     if (event == Buttons::Event::Action) {
         if (apRunning) {
-            stopAp();
+            stop();
         } else {
             startAp();
         }
         return true;
     } else if (event == Buttons::Event::ActionLong) {
         // Long press triggers direct NTP sync if WiFi is configured!
-        stopAp();
+        stop();
         NetSync::syncNtp();
         return true;
     }

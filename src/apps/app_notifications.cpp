@@ -73,8 +73,6 @@ bool onButton(Buttons::Event event) {
         if (bleMgr.dismissNotification(currentIndex)) {
             DebugLog::log("NOTIF: Dismissed local uid=%lu", (unsigned long)uid);
             if (currentIndex >= bleMgr.getNotificationCount() && currentIndex > 0) --currentIndex;
-            if (bleMgr.getNotificationCount() == 0)
-                ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
         }
         return true;
     } else if (event == Buttons::Event::ActionLong || event == Buttons::Event::Home) {

@@ -39,11 +39,7 @@ void safeCopy(char* dest, const char* src, size_t maxLen) {
 }
 
 void loadDefaultsIfEmpty() {
-    if (numEvents == 0) {
-        safeCopy(events[0].title, "Sync with CalDAV", sizeof(events[0].title));
-        safeCopy(events[0].timeStr, "Setup via Hotspot", sizeof(events[0].timeStr));
-        numEvents = 1;
-    }
+    // No placeholder event: keep the agenda genuinely empty until a calendar sync succeeds.
     if (numTodos == 0) {
         safeCopy(todos[0].title, "Connect to Hotspot", sizeof(todos[0].title));
         todos[0].completed = false;
@@ -116,7 +112,9 @@ bool connectWiFi(const WatchConfig::Config& cfg) {
     safeCopy(statusMsg, ersa::strings::MSG_WIFI_CONNECTING, sizeof(statusMsg));
     DebugLog::log("NET: Connecting to '%s'", cfg.wifiSsid);
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false); // Keep radio awake for stable TLS negotiation and large transfers
+    // Wi-Fi and BLE coexistence on this ESP32-C3 requires STA modem sleep.
+    // Disabling it while the BLE controller is enabled triggers an IDF abort.
+    WiFi.setSleep(true);
     WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
 
     const uint32_t startMs = millis();

@@ -5,6 +5,7 @@
 namespace AppPortal {
 
 void begin();
+void stop();
 void tick();
 void render(Adafruit_GFX& display);
 bool onButton(Buttons::Event event);

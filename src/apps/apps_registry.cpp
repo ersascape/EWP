@@ -187,6 +187,10 @@ public:
     const char* getId() const override { return "app_portal"; }
     const char* getTitle() const override { return "Hotspot Portal"; }
 
+    void onStop() override {
+        AppPortal::stop();
+    }
+
     void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
