@@ -2,6 +2,7 @@
 #include "core/watch_clock.h"
 #include "core/watch_config.h"
 #include "core/debug_log.h"
+#include "core/dvfs.h"
 #include "ui/watch_ui.h"
 
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
@@ -25,13 +26,15 @@ void setup() {
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
     const esp_pm_config_esp32c3_t pmConfig = {
         .max_freq_mhz = 160,
-        .min_freq_mhz = 80,
+        .min_freq_mhz = 40,
         // BLE modem sleep keeps advertising/connections alive while the
         // FreeRTOS tickless idle task places the CPU in light sleep.
         .light_sleep_enable = true
     };
     const esp_err_t pmResult = esp_pm_configure(&pmConfig);
     DebugLog::log("PWR: BLE-compatible automatic light sleep status=0x%x", unsigned(pmResult));
+    if (pmResult == ESP_OK && !Dvfs::begin())
+        DebugLog::log("DVFS: lock manager unavailable; idle clock remains 40 MHz");
 #else
     DebugLog::log("PWR: automatic light sleep unavailable (PM/tickless-idle config missing)");
 #endif
@@ -42,6 +45,7 @@ void setup() {
 
 void loop() {
     WatchClock::tick();
+    Dvfs::tick();
     DebugLog::tick();
     WatchUi::tick();
     delay(5);

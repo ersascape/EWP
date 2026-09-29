@@ -13,6 +13,7 @@
 #include "core/debug_log.h"
 #include "core/buttons.h"
 #include "core/net_sync.h"
+#include "core/dvfs.h"
 #include <Arduino.h>
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
 #include <esp_pm.h>
@@ -145,7 +146,10 @@ void renderCurrentApp() {
     gx.fillScreen(GxEPD_BLACK);
     gx.setTextColor(GxEPD_WHITE);
     gx.setTextWrap(false);
-    activeApp->render(espDisp, true);
+    {
+        Dvfs::Scope frequency(Dvfs::Profile::Compute, "app-render");
+        activeApp->render(espDisp, true);
+    }
     if (strcmp(activeApp->getId(), "watchface_clock") == 0) {
         const auto callState = bluetoothManager.getCallState();
         const char* title = (callState == ersa::services::CallState::Incoming ||
@@ -194,7 +198,24 @@ void renderCurrentApp() {
 
 void WatchUi::begin() {
     DebugLog::log("UI: initializing Ampere Works T1E board");
-    board.init();
+    uint8_t initOk = 0;
+    uint8_t initDegraded = 0;
+    uint8_t initFailed = 0;
+    auto checkInit = [&](const char* name, bool ok, bool degraded = false) {
+        if (degraded) {
+            ++initDegraded;
+            DebugLog::log("BOOT CHECK %s=degraded", name);
+        } else if (!ok) {
+            ++initFailed;
+            DebugLog::log("BOOT CHECK %s=failed", name);
+        } else {
+            ++initOk;
+            DebugLog::log("BOOT CHECK %s=ok", name);
+        }
+    };
+
+    const auto inputInit = board.init();
+    checkInit("buttons", inputInit.isOk());
 
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
     uiTaskHandle = xTaskGetCurrentTaskHandle();
@@ -214,16 +235,21 @@ void WatchUi::begin() {
 #endif
     bluetoothManager.setWakeCallback(notifyUiTask, nullptr);
 
-    timeService.init();
+    const auto timeInit = timeService.init();
+    checkInit("rtc", timeInit.isOk() && timeService.isRtcHealthy(),
+              timeInit.isOk() && !timeService.isRtcHealthy());
     ersa::services::TimeService::setInstance(&timeService);
 
-    powerManager.init();
+    const auto powerInit = powerManager.init();
+    checkInit("battery", powerInit.isOk());
     ersa::services::PowerManager::setInstance(&powerManager);
 
-    displayManager.init();
+    const auto displayInit = displayManager.init();
+    checkInit("display", displayInit.isOk());
     ersa::services::DisplayManager::setInstance(&displayManager);
 
-    bluetoothManager.init();
+    const auto bluetoothInit = bluetoothManager.init();
+    checkInit("bluetooth", bluetoothInit.isOk(), !bluetoothInit.isOk());
     ersa::services::BluetoothManager::setInstance(&bluetoothManager);
     ersa::services::SessionStats::begin();
     DebugLog::log("SESSION: last session uptime approximately %lu seconds",
@@ -354,6 +380,8 @@ void WatchUi::begin() {
     lastUserInputMs = lastActivityMs;
     DebugLog::log("UI: boot complete, active app: %s",
                   appManager.getActiveApp() ? appManager.getActiveApp()->getTitle() : "none");
+    DebugLog::log("BOOT CHECK summary ok=%u degraded=%u failed=%u",
+                  unsigned(initOk), unsigned(initDegraded), unsigned(initFailed));
 }
 
 void WatchUi::onButton(Buttons::Event legacyEvent) {
@@ -463,10 +491,20 @@ void WatchUi::tick() {
 
     if (!appManager.isDirty() && !Buttons::hasPendingEvents() && sleepEligible) {
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
-        // BLE controller events notify this task; the timeout lands on the next
-        // RTC minute so the watchface can refresh without a periodic polling loop.
+        Dvfs::reportPowerModes();
+        // Sleep until the earliest real deadline: minute refresh, pending media
+        // redraw, or a scheduled BLE advertising retry.
         const uint32_t secondsToMinute = 60 - WatchClock::now().second();
-        const TickType_t waitTicks = pdMS_TO_TICKS(secondsToMinute * 1000UL);
+        uint32_t waitMs = secondsToMinute * 1000UL;
+        const uint32_t bleWaitMs = bluetoothManager.nextWakeDelayMs(millis());
+        if (bleWaitMs < waitMs) waitMs = bleWaitMs;
+        if (watchfaceMediaPending) {
+            const uint32_t elapsed = uint32_t(millis() - watchfaceMediaChangedAt);
+            const uint32_t mediaWaitMs = elapsed >= 500 ? 0 : 500 - elapsed;
+            if (mediaWaitMs < waitMs) waitMs = mediaWaitMs;
+        }
+        TickType_t waitTicks = pdMS_TO_TICKS(waitMs);
+        if (!waitTicks) waitTicks = 1;
         ulTaskNotifyTake(pdTRUE, waitTicks ? waitTicks : 1);
 #else
         delay(25);
