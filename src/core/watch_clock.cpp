@@ -11,6 +11,7 @@ uint32_t lastReadMs = 0;
 uint32_t lastRtcPollMs = 0;
 
 constexpr bool SET_FROM_BUILD = false;
+constexpr uint32_t RTC_RECONCILE_INTERVAL_MS = 60000;
 
 bool valid(const DateTime& time) {
     return time.isValid() && time.year() >= 2024 && time.year() <= 2099;
@@ -59,7 +60,9 @@ void WatchClock::begin() {
 
 void WatchClock::tick() {
     const uint32_t nowMs = millis();
-    if (nowMs - lastRtcPollMs >= 1000) {
+    // Time reads are served from cachedTime + millis(). Reconcile against the
+    // DS3231 once a minute instead of doing two I2C transactions every second.
+    if (nowMs - lastRtcPollMs >= RTC_RECONCILE_INTERVAL_MS) {
         lastRtcPollMs = nowMs;
         if (responds()) {
             const DateTime rtcVal = rtc.now();
