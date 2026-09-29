@@ -307,8 +307,8 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
 ```
 
 `ewctl` displays readable Rich tables by default; add `--json` for scripts.
-The frequency override is volatile: 0 restores automatic 40–160 MHz power
-management. See the [USB control guide](docs/ewctl-control-bridge.md).
+Frequency profile changes are applied during a controlled reboot; 0 restores
+automatic 40–160 MHz power management. See the [USB control guide](docs/ewctl-control-bridge.md).
 
 For Arch Linux, install the release repository by adding this to
 `/etc/pacman.conf`:
@@ -321,6 +321,7 @@ Server = https://ersascape.github.io/ErsaWearableOS/arch/x86_64
 
 Then run `sudo pacman -Syu ewctl`. GitHub Pages publishes the package repository
 at this path and tagged GitHub releases also carry the package assets.
+See the [Ersa Wearable Platform package repository](https://ersascape.github.io/ErsaWearableOS/packages.html).
 Alternatively, build `packaging/arch/ewctl/PKGBUILD` with `makepkg -si`.
 The planned custom package hostname is `pkgs-wearables.ersa.dev`; once its DNS
 and GitHub Pages custom-domain settings are configured, use

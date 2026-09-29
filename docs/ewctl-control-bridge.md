@@ -70,7 +70,7 @@ Implemented commands:
 | `ble.status` | Link and advertising state, active companion source IDs, discovered capabilities |
 | `power.status` | CPU frequency/PM mode, sleep eligibility/block reason, active power locks |
 | `power.cpu-freq-get` | Measured CPU MHz, active test override, and automatic/forced mode |
-| `power.cpu-freq-set` | Temporarily pin to 40/80/160 MHz; value `0` restores automatic 40–160 MHz scaling |
+| `power.cpu-freq-set` | Queue a 40/80/160 MHz test profile; value `0` restores automatic 40–160 MHz scaling |
 | `logs.read` | Bounded batch of recent diagnostic records, with cursor for pagination |
 | `job.get` | State and result for an asynchronous job |
 
@@ -82,14 +82,14 @@ Read the active frequency and override:
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
 ```
 
-Force a frequency for a test, then restore normal dynamic PM scaling:
+Queue a CPU profile for a test, then restore normal dynamic PM scaling:
 
 ```sh
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
 ```
 
-The override is volatile and resets on reboot. Set accepts 0, 40, 80, or 160 MHz; zero restores automatic scaling. Confirm the actual clock with `power cpu-freq-get` after each request.
+ESP-IDF's global power policy is applied at boot. A set request returns an acknowledgement and then performs a controlled reboot to apply the profile; it does not reconfigure PM while BLE or peripheral locks are live. The request is held in RTC memory across that restart. `0` restores the automatic 40–160 MHz range. The 40 MHz profile uses a 40 MHz floor and an 80 MHz ceiling because ESP-IDF supports 80/160 MHz CPU maxima; BLE's APB lock can raise the live CPU to 80 MHz. Check the measured clock with `power cpu-freq-get` after the watch restarts.
 
 Follow-up commands can request `agenda.refresh`, `ble.restart-advertising`, or `system.reboot`. Commands that mutate configuration, clear data, or reboot must be explicitly named and return an acknowledgement before execution. Do not provide an arbitrary shell, memory read/write, or unrestricted register command.
 
@@ -101,7 +101,7 @@ Responses should report capability and validity instead of inventing defaults. F
 - Read no more than 64 bytes and dispatch no more than one request per loop pass to preserve UI and BLE responsiveness.
 - The existing UI sleep guard blocks automatic light sleep while USB CDC is attached because C3 USB Serial/JTAG loses its connection in light sleep. Detaching USB clears protocol mode; there is no separate inactivity lease yet.
 - Do not disable BLE power policy merely because USB is attached. Report the exact sleep blocker in `power.status`.
-- CPU frequency override is temporary, applies only until reboot, and may reduce BLE/Wi-Fi responsiveness at 40 MHz. `power cpu-freq-get` verifies the measured clock and override.
+- CPU frequency profile changes trigger a controlled reboot so ESP-IDF PM configuration is set before radio and peripheral locks start. The profile is retained through software restart; `0` returns to automatic scaling. Lower profiles can affect BLE/Wi-Fi responsiveness. `power cpu-freq-get` verifies the measured clock and requested profile.
 - USB Serial/JTAG and firmware logs share a physical stream. Diagnostics go to a 16-record in-memory ring and are exposed through `logs.read`. Once a valid request arrives, raw logging is suppressed until USB disconnect so replies remain machine-readable.
 - If the host opens or closes the serial port during sleep, recover cleanly. The watch continues its normal boot path and BLE advertising even when no host is present.
 

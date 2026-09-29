@@ -21,6 +21,8 @@ bool initialized = false;
 char responseBuffer[RESPONSE_LIMIT];
 size_t responseLength = 0;
 size_t responseOffset = 0;
+bool restartAfterReply = false;
+uint32_t restartDeadlineMs = 0;
 
 struct Slice { const char* data; size_t size; };
 
@@ -270,9 +272,11 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
             sendReply(id, false, "unavailable", "DVFS is not initialized or ESP-IDF rejected the test frequency", nullptr);
         } else {
             char data[128];
-            snprintf(data, sizeof(data), "{\"cpu_mhz\":%u,\"test_override_mhz\":%u,\"automatic\":%s}",
-                     unsigned(getCpuFrequencyMhz()), Dvfs::testCpuFrequencyMHz(), mhz == 0 ? "true" : "false");
+            snprintf(data, sizeof(data), "{\"requested_profile_mhz\":%u,\"automatic\":%s,\"restart_required\":true}",
+                     unsigned(mhz), mhz == 0 ? "true" : "false");
             sendReply(id, true, nullptr, nullptr, data);
+            restartAfterReply = true;
+            restartDeadlineMs = 0;
         }
     } else if (strcmp(command, "logs.read") == 0) {
         uint32_t limit = 4;
@@ -337,9 +341,15 @@ void tick() {
         requestLength = 0;
         droppingLongRequest = false;
         responseOffset = responseLength = 0;
+        restartAfterReply = false;
+        restartDeadlineMs = 0;
         return;
     }
     flushReply();
+    if (restartAfterReply && responseLength == 0) {
+        if (!restartDeadlineMs) restartDeadlineMs = millis() + 200;
+        else if (int32_t(millis() - restartDeadlineMs) >= 0) ESP.restart();
+    }
     // Drain the previous response before parsing another request. This keeps
     // replies framed and avoids blocking the watch loop on USB backpressure.
     if (responseLength) return;

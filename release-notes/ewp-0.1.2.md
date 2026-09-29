@@ -21,7 +21,7 @@ firmware and their current validation limits.
 - Inactivity-based automatic light sleep, ESP-IDF DVFS scopes, ADC-based
   battery estimation, and low-battery handling. Runtime and sleep residency
   still need current-measurement validation on hardware.
-- USB `ewctl` status and log queries, plus volatile CPU clock pinning for
+- USB `ewctl` status and log queries, plus reboot-applied CPU test profiles for
   development experiments. Rich output is the default, with `--json` for
   scripts; log tailing batches records to reduce USB round trips.
 - Arch Linux package for `ewctl`, with tagged-release builds publishing the
@@ -35,9 +35,11 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
 ```
 
-Supported forced frequencies are 40, 80, and 160 MHz. `0` restores automatic
-40–160 MHz scaling. `cpu-freq-get` reports the measured frequency; the override
-clears at reboot. Test at 40 MHz with BLE/Wi-Fi behavior in mind.
+Profiles are 40, 80, and 160 MHz. `0` restores automatic 40–160 MHz scaling.
+The command acknowledges and then performs a controlled reboot, applying the
+ESP-IDF power policy before BLE and peripheral locks start. The 40 MHz profile
+may rise to 80 MHz while BLE holds its APB lock. `cpu-freq-get` reports the
+measured clock and active profile after reboot.
 
 ## Firmware assets
 

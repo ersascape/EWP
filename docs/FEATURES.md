@@ -104,10 +104,12 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 logs --follow
 
 `power` reports the measured CPU frequency and `cpu_test_override_mhz` (`0`
 means automatic scaling). `power cpu-freq-set` accepts only 40, 80, 160, or 0;
-zero restores automatic power management. After changing it, run
-`power cpu-freq-get` to confirm the clock. Reduced clocks can affect BLE/Wi-Fi
-responsiveness. The override clears on reboot. Rich tables are the default;
-add `--json` for machine-readable output.
+it acknowledges and reboots in a controlled way so ESP-IDF applies the profile
+before BLE and peripheral locks start. Zero restores automatic power
+management. The requested profile survives software restart in RTC memory.
+The 40 MHz profile can rise to 80 MHz while BLE holds its APB lock. Run
+`power cpu-freq-get` after reboot to confirm the measured clock. Rich tables are
+the default; add `--json` for machine-readable output.
 
 ## Known validation limits
 

@@ -6,6 +6,7 @@
 
 #if defined(ARDUINO) && defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE
 #include <Arduino.h>
+#include <esp_attr.h>
 #include <esp32/clk.h>
 #include <esp_pm.h>
 #include <freertos/FreeRTOS.h>
@@ -34,16 +35,7 @@ uint32_t interactiveScopes = 0;
 uint32_t computeScopes = 0;
 bool ready = false;
 bool reportWritten = false;
-unsigned testFrequencyMHz = 0;
-
-esp_err_t configureFrequencyRange(unsigned minMHz, unsigned maxMHz) {
-    const esp_pm_config_esp32c3_t config = {
-        .max_freq_mhz = static_cast<int>(maxMHz),
-        .min_freq_mhz = static_cast<int>(minMHz),
-        .light_sleep_enable = true
-    };
-    return esp_pm_configure(&config);
-}
+RTC_DATA_ATTR unsigned testFrequencyMHz = 0;
 
 LockState& stateFor(Profile profile) {
     return profile == Profile::Compute ? compute : interactive;
@@ -130,8 +122,8 @@ bool begin() {
     lastLoggedMHz = cpuMHz();
     lastSampleMs = millis();
     ready = true;
-    DebugLog::log("DVFS: ready idle=40 MHz interactive=80 MHz compute=160 MHz current=%lu MHz",
-                  static_cast<unsigned long>(cpuMHz()));
+    DebugLog::log("DVFS: ready profile=%u MHz (0=automatic) current=%lu MHz",
+                  testFrequencyMHz, static_cast<unsigned long>(cpuMHz()));
     return true;
 }
 
@@ -181,28 +173,12 @@ void reportPowerModes() {
 
 bool setTestCpuFrequencyMHz(unsigned mhz) {
     if (!ready || !mutex || (mhz != 0 && mhz != 40 && mhz != 80 && mhz != 160)) return false;
-    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return false;
-    const esp_err_t result = mhz == 0
-        ? configureFrequencyRange(40, 160)
-        : configureFrequencyRange(mhz, mhz);
-    if (result == ESP_OK) {
-        testFrequencyMHz = mhz;
-        lastLoggedMHz = cpuMHz();
-    }
-    xSemaphoreGive(mutex);
-    if (result == ESP_OK) {
-        if (mhz) {
-            DebugLog::log("DVFS: test CPU frequency forced to %u MHz (currently %lu MHz)",
-                          mhz, static_cast<unsigned long>(cpuMHz()));
-        } else {
-            DebugLog::log("DVFS: test override cleared; automatic range 40-160 MHz (currently %lu MHz)",
-                          static_cast<unsigned long>(cpuMHz()));
-        }
-    } else {
-        DebugLog::log("DVFS: test frequency configuration failed mhz=%u err=0x%x",
-                      mhz, unsigned(result));
-    }
-    return result == ESP_OK;
+    // PM policy is configured once, before BLE and peripheral locks start.
+    // Reconfiguring it live can race the radio controller and active locks.
+    // Keep the requested profile in RTC memory and apply it on a controlled reboot.
+    testFrequencyMHz = mhz;
+    DebugLog::log("DVFS: CPU test profile %u MHz queued for controlled reboot", mhz);
+    return true;
 }
 
 unsigned testCpuFrequencyMHz() { return testFrequencyMHz; }

@@ -25,15 +25,25 @@ void setup() {
     DebugLog::log("BOOT starting config");
     WatchConfig::begin();
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE
+    const unsigned testProfileMHz = Dvfs::testCpuFrequencyMHz();
+    // Apply test profiles before Bluetooth or any peripheral PM locks exist.
+    // 40 MHz uses an 80 MHz ceiling because ESP-IDF permits 80/160 MHz maxima;
+    // radio APB locks may therefore raise the live CPU clock to 80 MHz.
+    const int maxMHz = testProfileMHz == 80 ? 80 :
+                       testProfileMHz == 160 ? 160 :
+                       testProfileMHz == 40 ? 80 : 160;
+    const int minMHz = testProfileMHz == 80 ? 80 :
+                       testProfileMHz == 160 ? 160 : 40;
     const esp_pm_config_esp32c3_t pmConfig = {
-        .max_freq_mhz = 160,
-        .min_freq_mhz = 40,
+        .max_freq_mhz = maxMHz,
+        .min_freq_mhz = minMHz,
         // BLE modem sleep keeps advertising/connections alive while the
         // FreeRTOS tickless idle task places the CPU in light sleep.
         .light_sleep_enable = true
     };
     const esp_err_t pmResult = esp_pm_configure(&pmConfig);
-    DebugLog::log("PWR: BLE-compatible automatic light sleep status=0x%x", unsigned(pmResult));
+    DebugLog::log("PWR: CPU profile=%u MHz (%s) light sleep status=0x%x",
+                  testProfileMHz, testProfileMHz ? "test" : "automatic", unsigned(pmResult));
     if (pmResult == ESP_OK && !Dvfs::begin())
         DebugLog::log("DVFS: lock manager unavailable; idle clock remains 40 MHz");
 #else
