@@ -26,13 +26,17 @@ bool onButton(Buttons::Event event) {
 
     if (state == ersa::services::CallState::Incoming) {
         if (event == Buttons::Event::Next) {
-            // Keep call handling on the phone; B1 returns to the menu.
-            ersa::app::ApplicationManager::instance().switchTo("app_drawer");
+            // B1 accepts an incoming call.
+            DebugLog::log("CALL: B1 pressed -> Accept call");
+            bleMgr.acceptCall();
             return true;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
             // B2 = DECLINE / HANG UP Call
             DebugLog::log("CALL: B2 pressed -> Decline call");
             bleMgr.rejectCall();
+            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
+            return true;
+        } else if (event == Buttons::Event::Home) {
             ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
         }
@@ -43,21 +47,27 @@ bool onButton(Buttons::Event event) {
             bleMgr.hangupCall();
             ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
-        } else if (event == Buttons::Event::Next || event == Buttons::Event::Home) {
-            // B1 always returns to the menu while leaving the call active.
-            ersa::app::ApplicationManager::instance().switchTo("app_drawer");
+        } else if (event == Buttons::Event::Home) {
+            // Hold B1 to minimize the active call to the watchface.
+            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
         }
     } else {
         if (event == Buttons::Event::Next) {
+            // B1 scrolls up through recent calls.
+            const size_t count = bleMgr.getRecentCallCount();
+            if (count) selectedRecent = (selectedRecent + count - 1) % count;
+            return true;
+        } else if (event == Buttons::Event::Action) {
+            // B2 scrolls down through recent calls.
             const size_t count = bleMgr.getRecentCallCount();
             if (count) selectedRecent = (selectedRecent + 1) % count;
             return true;
-        } else if (event == Buttons::Event::Action) {
+        } else if (event == Buttons::Event::ActionLong) {
             if (bleMgr.canDial() && bleMgr.getRecentCallCount() > 0 &&
                 bleMgr.getRecentCall(selectedRecent).number[0]) {
                 const auto& recent = bleMgr.getRecentCall(selectedRecent);
-                DebugLog::log("CALL: B2 -> dial recent %s", recent.name);
+                DebugLog::log("CALL: hold B2 -> dial recent %s", recent.name);
                 bleMgr.dialRecent(selectedRecent);
                 return true;
             }
@@ -106,9 +116,10 @@ void render(Adafruit_GFX& display) {
         const bool selectedDialable = count && ble.getRecentCall(selectedRecent).number[0];
         const char* dialHint = !count ? "no recent number" :
                                !selectedDialable ? "number unavailable" :
-                               !ble.canDial() ? "connect phone to dial" : "b2: dial";
+                               !ble.canDial() ? "connect phone to dial" : "hold b2: dial";
+        WatchText::line(display, "b1 up   b2 down", 18, 153, 166);
         WatchText::line(display, dialHint, 18, 168, 166);
-        WatchText::line(display, "b1: scroll   hold b1: menu", 18, 186, 166);
+        WatchText::line(display, "hold b1: menu", 18, 186, 166);
         return;
     }
 
