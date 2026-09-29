@@ -22,12 +22,12 @@ docker run --rm \
     chown -R builder:builder /tmp/ewctl-pkgbuild
     runuser -u builder -- bash -euc "cd /tmp/ewctl-pkgbuild && makepkg --cleanbuild --noconfirm"
     cp /tmp/ewctl-pkgbuild/*.pkg.tar.zst /workspace/.pio/release/
-    repo-add /workspace/.pio/release/ewctl.db.tar.gz /workspace/.pio/release/ewctl-*.pkg.tar.zst
+    repo-add /workspace/.pio/release/ersa-ewctl.db.tar.gz /workspace/.pio/release/ewctl-*.pkg.tar.zst
     # repo-add creates .db/.files aliases to the .tar.gz archives. Copy via
     # distinct temporary files before replacing those aliases with regular
     # files; direct cp follows the aliases and reports source == destination.
-    cp -L /workspace/.pio/release/ewctl.db.tar.gz /tmp/ewctl.db
-    mv -f /tmp/ewctl.db /workspace/.pio/release/ewctl.db
-    cp -L /workspace/.pio/release/ewctl.files.tar.gz /tmp/ewctl.files
-    mv -f /tmp/ewctl.files /workspace/.pio/release/ewctl.files
+    cp -L /workspace/.pio/release/ersa-ewctl.db.tar.gz /tmp/ersa-ewctl.db
+    mv -f /tmp/ersa-ewctl.db /workspace/.pio/release/ersa-ewctl.db
+    cp -L /workspace/.pio/release/ersa-ewctl.files.tar.gz /tmp/ersa-ewctl.files
+    mv -f /tmp/ersa-ewctl.files /workspace/.pio/release/ersa-ewctl.files
   '

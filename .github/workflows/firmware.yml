@@ -78,10 +78,56 @@ jobs:
           name: ewctl-arch-repo-${{ github.sha }}
           path: |
             .pio/release/ewctl-*.pkg.tar.zst
-            .pio/release/ewctl.db
-            .pio/release/ewctl.files
+            .pio/release/ersa-ewctl.db
+            .pio/release/ersa-ewctl.files
           if-no-files-found: error
           retention-days: 30
+
+  publish-package-repository:
+    name: Publish ewctl repository to gh-pages
+    if: startsWith(github.ref, 'refs/tags/ewp-')
+    needs: [package-ewctl]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ewctl-package-repository
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Download package repository artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ewctl-arch-repo-${{ github.sha }}
+          path: .pio/release
+      - name: Assemble package-only site
+        run: |
+          mkdir -p .pio/site
+          cp packaging/pages/index.html packaging/pages/CNAME .pio/site/
+          cp .pio/release/ewctl-*.pkg.tar.zst .pio/release/ersa-ewctl.db .pio/release/ersa-ewctl.files .pio/site/
+      - name: Publish static repository branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          SITE_REPO="$RUNNER_TEMP/ewctl-pages"
+          if git ls-remote --exit-code "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/gh-pages >/dev/null 2>&1; then
+            git clone --depth=1 --branch gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" "$SITE_REPO"
+          else
+            git init --initial-branch=gh-pages "$SITE_REPO"
+            git -C "$SITE_REPO" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          fi
+          cp .pio/site/* "$SITE_REPO/"
+          git -C "$SITE_REPO" add --all
+          if git -C "$SITE_REPO" diff --cached --quiet; then
+            echo "Package repository is already current."
+            exit 0
+          fi
+          git -C "$SITE_REPO" commit -m "deploy: publish ewctl package repository ${GITHUB_REF_NAME}"
+          git -C "$SITE_REPO" push origin gh-pages
 
   release:
     name: Publish GitHub Release
@@ -117,5 +163,5 @@ jobs:
             .pio/release/SHA256SUMS
             .pio/release/FLASHING.md
             .pio/release/ewctl-*.pkg.tar.zst
-            .pio/release/ewctl.db
-            .pio/release/ewctl.files
+            .pio/release/ersa-ewctl.db
+            .pio/release/ersa-ewctl.files

@@ -74,20 +74,21 @@ integrations and calls out areas that still need measurements on the watch.
 - GitHub Actions builds app and factory images for tagged releases and attaches
   checksums and flashing instructions.
 - Tagged releases also include an Arch `ewctl` package and a pacman repository
-  database. Add this repository configuration, then install with
+  database. The package-only repository is hosted at
+  `https://pkgs-wearables.ersa.dev/`; add this configuration, then install with
   `sudo pacman -Syu ewctl`:
 
   ```ini
-  [ersa-ewctl]
+  [ewctl]
   SigLevel = Optional
-  Server = https://ersascape.github.io/ErsaWearableOS/arch/x86_64
+  Server = https://pkgs-wearables.ersa.dev/
   ```
 
   The package can also be built locally from `packaging/arch/ewctl/PKGBUILD`.
   Packages are currently unsigned; pacman downloads them and the repository
-  database over HTTPS. A future custom hostname is `pkgs-wearables.ersa.dev`;
-  it will be usable after DNS and the GitHub Pages custom-domain setting are
-  configured.
+  database over HTTPS. Tagged releases attach the package and matching
+  `ersa-ewctl.db` and `ersa-ewctl.files` assets. Build locally with `makepkg -si`
+  if preferred.
 
 ## Useful commands
 

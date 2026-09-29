@@ -316,16 +316,15 @@ For Arch Linux, install the release repository by adding this to
 ```ini
 [ersa-ewctl]
 SigLevel = Optional
-Server = https://ersascape.github.io/ErsaWearableOS/arch/x86_64
+Server = https://pkgs-wearables.ersa.dev/
 ```
 
-Then run `sudo pacman -Syu ewctl`. GitHub Pages publishes the package repository
-at this path and tagged GitHub releases also carry the package assets.
-See the [Ersa Wearable Platform package repository](https://ersascape.github.io/ErsaWearableOS/packages.html).
+Then run `sudo pacman -Syu ewctl`. The package-only repository is hosted at
+[pkgs-wearables.ersa.dev](https://pkgs-wearables.ersa.dev/); tagged GitHub
+builds publish directly to the `gh-pages` branch, and tagged GitHub releases
+also include the package and repository metadata. The Pages source is the root
+of that branch; it contains only the package index, archives, and landing page.
 Alternatively, build `packaging/arch/ewctl/PKGBUILD` with `makepkg -si`.
-The planned custom package hostname is `pkgs-wearables.ersa.dev`; once its DNS
-and GitHub Pages custom-domain settings are configured, use
-`https://pkgs-wearables.ersa.dev/arch/x86_64` as the repository server.
 
 ---
 

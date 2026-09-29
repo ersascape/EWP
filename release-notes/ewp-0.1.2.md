@@ -24,8 +24,9 @@ firmware and their current validation limits.
 - USB `ewctl` status and log queries, plus reboot-applied CPU test profiles for
   development experiments. Rich output is the default, with `--json` for
   scripts; log tailing batches records to reduce USB round trips.
-- Arch Linux package for `ewctl`, with tagged-release builds publishing the
-  package and pacman repository database to GitHub Pages and as release assets.
+- Arch Linux package for `ewctl`; tagged releases attach the package and pacman
+  repository database as GitHub Release assets; the package-only index is
+  deployed to `https://pkgs-wearables.ersa.dev/`.
 
 ## CPU frequency test commands
 
@@ -47,5 +48,5 @@ measured clock and active profile after reboot.
 - `ewp-factory.bin` — factory image that resets saved settings.
 - `SHA256SUMS` — checksums for the firmware files.
 - `FLASHING.md` — flashing and image-selection instructions.
-- `ewctl-*.pkg.tar.zst`, `ewctl.db`, and `ewctl.files` — Arch package and
+- `ewctl-*.pkg.tar.zst`, `ersa-ewctl.db`, and `ersa-ewctl.files` — Arch package and
   pacman repository index.
