@@ -197,9 +197,19 @@ public:
         }
         // Coalesce queued modifications without mixing attributes across UIDs.
         for (size_t i = 0; i < pendingCount_; ++i) {
-            if (pending_[i].uid == uid) { pending_[i] = {uid, incoming, false, data[1]}; return; }
+            if (pending_[i].uid == uid) {
+                pending_[i] = {uid, incoming, false, data[1]};
+                DebugLog::log("ANCS: coalesced uid=%08lx pending=%u blocked=%u control=%u",
+                              static_cast<unsigned long>(uid), unsigned(pendingCount_),
+                              unsigned(attributesBlocked_), unsigned(control_ != nullptr));
+                return;
+            }
         }
-        if (attributesBlocked_) return;
+        if (attributesBlocked_) {
+            DebugLog::log("ANCS: not requesting uid=%08lx; attribute recovery is blocking requests",
+                          static_cast<unsigned long>(uid));
+            return;
+        }
         if (pendingCount_ == 16) {
             if (incoming) --pendingCount_;
             else {
@@ -215,6 +225,9 @@ public:
             pending_[0] = {uid, true, false, data[1]};
             ++pendingCount_;
         } else pending_[pendingCount_++] = {uid, false, false, data[1]};
+        DebugLog::log("ANCS: queued attributes uid=%08lx call=%u pending=%u blocked=%u control=%u",
+                      static_cast<unsigned long>(uid), unsigned(incoming), unsigned(pendingCount_),
+                      unsigned(attributesBlocked_), unsigned(control_ != nullptr));
     }
 
     void requestNext() {
@@ -230,7 +243,11 @@ public:
             attributes_.begin(active_.uid, requestNegativeLabel);
             waiting_ = true;
             requestedAt_ = millis();
+            DebugLog::log("ANCS: writing attribute request uid=%08lx negative_label=%u",
+                          static_cast<unsigned long>(active_.uid), unsigned(requestNegativeLabel));
             control_->writeValue(cmd, requestNegativeLabel ? 14 : 11, true);
+            DebugLog::log("ANCS: attribute request write complete uid=%08lx",
+                          static_cast<unsigned long>(active_.uid));
             break;
         }
     }
@@ -238,6 +255,8 @@ public:
     void handleAttributes(const uint8_t* data, size_t size) {
         if (!waiting_) return;
         const auto result = attributes_.feed(data, size);
+        DebugLog::log("ANCS: data-source fragment uid=%08lx bytes=%u result=%u",
+                      static_cast<unsigned long>(active_.uid), unsigned(size), unsigned(result));
         if (result == protocols::AncsAttributes::Result::Invalid) {
             // A missing fragment cannot be resynchronized by guessing a header.
             overflow_ = true;
