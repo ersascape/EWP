@@ -1,6 +1,7 @@
 #include "ersa/services/bluetooth_manager.h"
 #include "ersa/services/storage_service.h"
 #include "core/debug_log.h"
+#include "core/dvfs.h"
 #include <string.h>
 
 #if defined(ARDUINO)
@@ -86,11 +87,8 @@ Result<void> BluetoothManager::init() {
     ble_.setNotificationCallback(onBleNotification, this);
     ble_.setTimeCallback([](uint32_t epoch, void* user) {
         auto* self = static_cast<BluetoothManager*>(user);
-        if (self) {
-            if (self->wakeCallback_) self->wakeCallback_(self->wakeUserData_);
-            self->bus_.post(events::Event::createTimeSync(
-                epoch, events::TimeSource::BleCurrentTime, millis()));
-        }
+        if (self) self->receive(events::Event::createTimeSync(
+            epoch, events::TimeSource::BleCurrentTime, millis()));
     }, this);
 
     Result<void> res = ble_.init();
@@ -285,7 +283,12 @@ void BluetoothManager::tick() {
     ble_.tick();
 #if defined(ARDUINO)
     events::Event event;
-    while (incomingQueue_ && xQueueReceive(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE) apply(event);
+    if (incomingQueue_ && xQueueReceive(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE) {
+        Dvfs::Scope frequency(Dvfs::Profile::Interactive, "ble-event-dispatch");
+        do {
+            apply(event);
+        } while (xQueueReceive(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE);
+    }
 #endif
 }
 

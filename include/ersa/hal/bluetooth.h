@@ -40,6 +40,8 @@ public:
     virtual void stopAdvertising() = 0;
     virtual bool isConnected() const = 0;
     virtual bool isAdvertising() const { return false; }
+    // Milliseconds until radio maintenance must run, or UINT32_MAX if none.
+    virtual uint32_t nextWakeDelayMs(uint32_t nowMs) const { (void)nowMs; return UINT32_MAX; }
     virtual void tick() {}
     virtual const char* getDeviceName() const = 0;
     virtual const char* getDeviceAddress() const = 0;

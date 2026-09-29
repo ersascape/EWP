@@ -334,6 +334,13 @@ void Esp32Bluetooth::stopAdvertising() {
 
 bool Esp32Bluetooth::isAdvertising() const { return pImpl_->advertising_; }
 
+uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t nowMs) const {
+    if (!pImpl_->initialized_ || pImpl_->connected_ || pImpl_->advertising_ ||
+        !pImpl_->advertisingPending_) return UINT32_MAX;
+    const int32_t remaining = int32_t(pImpl_->advertiseAfterMs_.load() - nowMs);
+    return remaining > 0 ? uint32_t(remaining) : 0;
+}
+
 const char* Esp32Bluetooth::getDeviceName() const {
     return "Ersa Wearable";
 }
@@ -484,6 +491,7 @@ void Esp32Bluetooth::startAdvertising() {}
 void Esp32Bluetooth::stopAdvertising() {}
 bool Esp32Bluetooth::isConnected() const { return false; }
 bool Esp32Bluetooth::isAdvertising() const { return false; }
+uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t) const { return UINT32_MAX; }
 void Esp32Bluetooth::tick() {}
 void Esp32Bluetooth::beginAdvertising() {}
 const char* Esp32Bluetooth::getDeviceName() const { return "Ersa Wearable"; }

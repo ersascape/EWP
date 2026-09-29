@@ -47,6 +47,7 @@ public:
 
     bool isConnected() const;
     bool isAdvertising() const { return ble_.isAdvertising(); }
+    uint32_t nextWakeDelayMs(uint32_t nowMs) const { return ble_.nextWakeDelayMs(nowMs); }
     const char* getDeviceName() const;
     const char* getDeviceAddress() const;
     void restartAdvertising();

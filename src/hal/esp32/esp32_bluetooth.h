@@ -15,6 +15,7 @@ public:
     void stopAdvertising() override;
     bool isConnected() const override;
     bool isAdvertising() const override;
+    uint32_t nextWakeDelayMs(uint32_t nowMs) const override;
     void tick() override;
     const char* getDeviceName() const override;
     const char* getDeviceAddress() const override;

@@ -116,6 +116,34 @@ public:
 
     bool live() const { return !shutdown_ && session_ == generation_.load(); }
 
+    void notifyWorker() {
+        if (task_) xTaskNotifyGive(task_);
+    }
+
+    bool hasQueuedWork() const {
+        return uxQueueMessagesWaiting(queue_) || uxQueueMessagesWaiting(sourceQueue_) ||
+               uxQueueMessagesWaiting(callQueue_) || overflow_.load();
+    }
+
+    TickType_t nextWorkerWake() const {
+        uint32_t waitMs = UINT32_MAX;
+        if (waiting_) {
+            const uint32_t elapsed = uint32_t(millis() - requestedAt_);
+            waitMs = elapsed >= 10000 ? 0 : 10000 - elapsed;
+        }
+        if (attributesBlocked_) {
+            const uint8_t retryExponent = recoveryAttempts_ < 4 ? recoveryAttempts_ : 4;
+            const uint32_t retryDelayMs = 2000UL << retryExponent;
+            const uint32_t elapsed = uint32_t(millis() - recoveryAt_);
+            const uint32_t retryInMs = elapsed >= retryDelayMs ? 0 : retryDelayMs - elapsed;
+            if (retryInMs < waitMs) waitMs = retryInMs;
+        }
+        if (waitMs == UINT32_MAX) return portMAX_DELAY;
+        TickType_t ticks = pdMS_TO_TICKS(waitMs);
+        if (waitMs && !ticks) ticks = 1;
+        return ticks;
+    }
+
     void enqueue(Kind kind, uint32_t session, const uint8_t* bytes, size_t size,
                  uint32_t uid = 0, uint32_t epoch = 0) {
         if (session != generation_.load() || !queue_) return;
@@ -133,6 +161,7 @@ public:
                 xQueueSend(queue, &source, 0);
                 ++droppedHistory_;
             }
+            notifyWorker();
             return;
         }
         Packet p{};
@@ -147,6 +176,7 @@ public:
             if (kind == Attributes) overflow_ = true;
             else ++droppedOther_;
         }
+        notifyWorker();
     }
 
     bool requestNotificationDismiss(uint32_t uid) {
@@ -155,7 +185,9 @@ public:
         packet.kind = NotificationAction;
         packet.session = generation_.load();
         packet.uid = uid;
-        return xQueueSend(queue_, &packet, 0) == pdTRUE;
+        const bool queued = xQueueSend(queue_, &packet, 0) == pdTRUE;
+        if (queued) notifyWorker();
+        return queued;
     }
 
     void changePeer(const uint8_t* address, esp_ble_addr_type_t type) {
@@ -166,6 +198,7 @@ public:
         authenticatedGeneration_ = UINT32_MAX;
         ancsReady_ = false; amsReady_ = false;
         portEXIT_CRITICAL(&controlMux_);
+        notifyWorker();
         // No waits or GATT operations on the Bluetooth callback thread.
         if (address && !task_ && queue_ && sourceQueue_ && callQueue_) {
             if (xTaskCreate(taskEntry, "apple_ble", 6144, this, 3, &task_) != pdPASS)
@@ -466,7 +499,12 @@ public:
 
     void pause(uint32_t ms) {
         const uint32_t start = millis();
-        while (live() && uint32_t(millis() - start) < ms) vTaskDelay(pdMS_TO_TICKS(50));
+        while (live() && uint32_t(millis() - start) < ms) {
+            const uint32_t remaining = ms - uint32_t(millis() - start);
+            TickType_t ticks = pdMS_TO_TICKS(remaining);
+            if (remaining && !ticks) ticks = 1;
+            ulTaskNotifyTake(pdTRUE, ticks);
+        }
     }
 
     static void taskEntry(void* value) { static_cast<Impl*>(value)->run(); }
@@ -482,15 +520,13 @@ public:
             memcpy(peer, peer_, sizeof(peer)); type = addrType_;
             portEXIT_CRITICAL(&controlMux_);
             resetSession();
-            if (!wanted) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+            if (!wanted) {
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                continue;
+            }
             DebugLog::log("BLE-Apple: waiting for authentication (session=%lu)", (unsigned long)session_);
-            uint32_t lastWaitLog = millis();
             while (live() && authenticatedGeneration_.load() != session_) {
-                vTaskDelay(pdMS_TO_TICKS(50));
-                if (uint32_t(millis() - lastWaitLog) >= 5000) {
-                    DebugLog::log("BLE-Apple: still waiting for authentication");
-                    lastWaitLog = millis();
-                }
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             }
             if (!live()) continue;
             DebugLog::log("BLE-Apple: attaching GATT client");
@@ -505,8 +541,10 @@ public:
                 if (!ready) pause(2000);
             }
             while (live() && client_->isConnected() && ready) {
+                if (!hasQueuedWork())
+                    ulTaskNotifyTake(pdTRUE, nextWorkerWake());
                 Packet packet;
-                const bool received = xQueueReceive(queue_, &packet, pdMS_TO_TICKS(50)) == pdTRUE;
+                const bool received = xQueueReceive(queue_, &packet, 0) == pdTRUE;
                 SourcePacket source;
                 while (xQueueReceive(callQueue_, &source, 0) == pdTRUE) {
                     if (source.session == session_ && source.epoch == ancsEpoch_.load() && live())
@@ -533,7 +571,7 @@ public:
                     attributesBlocked_ = true;
                     recoveryAt_ = millis();
                 }
-                if (waiting_ && uint32_t(millis() - requestedAt_) > 10000) {
+                if (waiting_ && uint32_t(millis() - requestedAt_) >= 10000) {
                     // ANCS deliberately sends no Data Source response when a
                     // requested UID is no longer valid. Do not resubscribe and
                     // retry that UID at the head of the queue: abandon it and
@@ -567,7 +605,7 @@ public:
                     while (live() && client_->isConnected() && !ready) { pause(2000); ready = discover(); }
                 }
                 requestNext();
-
+                taskYIELD();
             }
             ancsReady_ = false; amsReady_ = false;
             if (client_->isConnected()) client_->disconnect();
@@ -599,6 +637,7 @@ Esp32AppleClient::Esp32AppleClient() : pImpl_(new Impl()) {}
 Esp32AppleClient::~Esp32AppleClient() {
     stop();
     pImpl_->shutdown_ = true;
+    pImpl_->notifyWorker();
     while (pImpl_->task_ && !pImpl_->exited_) vTaskDelay(pdMS_TO_TICKS(50));
     if (pImpl_->queue_) vQueueDelete(pImpl_->queue_);
     if (pImpl_->sourceQueue_) vQueueDelete(pImpl_->sourceQueue_);
@@ -614,6 +653,7 @@ void Esp32AppleClient::authenticationComplete(bool success) {
     // A latched generation survives authentication completing before the worker
     // starts waiting. Disconnect/new connection invalidates it in changePeer().
     pImpl_->authenticatedGeneration_ = success ? pImpl_->generation_.load() : UINT32_MAX;
+    pImpl_->notifyWorker();
 }
 void Esp32AppleClient::stop() { pImpl_->changePeer(nullptr, BLE_ADDR_TYPE_RANDOM); }
 bool Esp32AppleClient::isAncsActive() const { return pImpl_->ancsReady_; }
