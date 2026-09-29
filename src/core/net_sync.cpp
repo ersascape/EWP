@@ -13,6 +13,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <esp_sntp.h>
+#include <esp_heap_caps.h>
 
 namespace NetSync {
 
@@ -24,6 +25,7 @@ CalTodo todos[MAX_TODOS];
 size_t numTodos = 0;
 
 bool syncing = false;
+bool tlsAllocationFailed = false;
 char statusMsg[48] = "Ready";
 Preferences cachePrefs;
 constexpr const char* CACHE_NS = ersa::config::PREFS_NS_CACHE;
@@ -36,6 +38,26 @@ void safeCopy(char* dest, const char* src, size_t maxLen) {
     }
     strncpy(dest, src, maxLen - 1);
     dest[maxLen - 1] = '\0';
+}
+
+uint32_t calendarDayKey(uint32_t epoch) {
+    const DateTime date(epoch);
+    return static_cast<uint32_t>(date.year()) * 10000U +
+           static_cast<uint32_t>(date.month()) * 100U + date.day();
+}
+
+uint32_t todayKey() {
+    const DateTime now = WatchClock::now();
+    return static_cast<uint32_t>(now.year()) * 10000U +
+           static_cast<uint32_t>(now.month()) * 100U + now.day();
+}
+
+size_t countEventsForDay(uint32_t key, size_t limit = MAX_EVENTS) {
+    size_t count = 0;
+    for (size_t i = 0; i < limit; ++i) {
+        if (events[i].dayKey == key) ++count;
+    }
+    return count;
 }
 
 void loadDefaultsIfEmpty() {
@@ -53,12 +75,9 @@ void loadDefaultsIfEmpty() {
 
 void saveCache() {
     if (cachePrefs.begin(CACHE_NS, false)) {
-        const DateTime now = WatchClock::now();
         cachePrefs.putBytes("events", events, sizeof(events));
         cachePrefs.putUChar("ev_cnt", (uint8_t)numEvents);
-        cachePrefs.putUShort("ev_yr", now.year());
-        cachePrefs.putUChar("ev_mo", now.month());
-        cachePrefs.putUChar("ev_dy", now.day());
+        cachePrefs.putUChar("ev_ver", 2);
         cachePrefs.putBytes("todos", todos, sizeof(todos));
         cachePrefs.putUChar("td_cnt", (uint8_t)numTodos);
         cachePrefs.end();
@@ -70,13 +89,10 @@ void loadCache() {
     if (cachePrefs.begin(CACHE_NS, true)) {
         hasInitializedCache = cachePrefs.isKey("ev_cnt");
         if (hasInitializedCache) {
-            const DateTime now = WatchClock::now();
-            uint16_t cachedYr = cachePrefs.getUShort("ev_yr", 0);
-            uint8_t cachedMo = cachePrefs.getUChar("ev_mo", 0);
-            uint8_t cachedDy = cachePrefs.getUChar("ev_dy", 0);
-
-            // Only restore cached events if they are strictly for today!
-            if (cachedYr == now.year() && cachedMo == now.month() && cachedDy == now.day()) {
+            const size_t cachedBytes = cachePrefs.getBytesLength("events");
+            const bool currentFormat = cachePrefs.getUChar("ev_ver", 0) == 2 &&
+                                       cachedBytes == sizeof(events);
+            if (currentFormat) {
                 numEvents = cachePrefs.getUChar("ev_cnt", 0);
                 if (numEvents > MAX_EVENTS) numEvents = 0;
                 if (numEvents > 0) {
@@ -84,8 +100,7 @@ void loadCache() {
                 }
             } else {
                 numEvents = 0;
-                DebugLog::log("NET: Cached events expired (cached %04u-%02u-%02u vs today %04u-%02u-%02u)",
-                              cachedYr, cachedMo, cachedDy, now.year(), now.month(), now.day());
+                DebugLog::log("NET: Calendar cache missing or old format; sync to refresh");
             }
 
             numTodos = cachePrefs.getUChar("td_cnt", 0);
@@ -140,7 +155,8 @@ void disconnectWiFi() {
     DebugLog::log("NET: WiFi turned off (power save)");
 }
 
-String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, bool encodeAt = false) {
+String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName,
+                      bool encodeAt = false, bool tasksOnly = false) {
     String s = String(cfg.caldavServer);
     s.trim();
     if (s.isEmpty()) return "";
@@ -150,22 +166,22 @@ String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, 
         s = "https://" + s.substring(9);
     }
 
-    // Direct ICS file link
-    if (s.endsWith(".ics") || s.indexOf(".ics?") != -1 || s.indexOf("?export") != -1) {
+    // Direct ICS file links do not support SabreDAV export filters.
+    if (s.endsWith(".ics") || s.indexOf(".ics?") != -1) {
         return s;
     }
 
     while (s.endsWith("/")) s.remove(s.length() - 1);
+    const int queryStart = s.indexOf('?');
+    if (queryStart >= 0) s.remove(queryStart);
 
-    if (s.indexOf("/calendars/") != -1) {
-        return s + "?export";
-    }
+    const bool calendarEndpoint = s.indexOf("/calendars/") != -1;
 
     if (s.indexOf("/remote.php/dav") == -1) {
         s += "/remote.php/dav";
     }
 
-    if (cfg.caldavUser[0] != '\0') {
+    if (!calendarEndpoint && cfg.caldavUser[0] != '\0') {
         s += "/calendars/";
         String u = String(cfg.caldavUser);
         if (encodeAt) u.replace("@", "%40");
@@ -174,7 +190,39 @@ String buildCalDavUrl(const WatchConfig::Config& cfg, const char* calendarName, 
         String c = (calendarName && calendarName[0] != '\0') ? String(calendarName) : String("personal");
         if (encodeAt) c.replace("@", "%40");
         s += c;
+        // SabreDAV's export endpoint can filter event exports by time range.
+        // Query timestamps are UTC; WatchClock keeps local wall time as epoch.
+        const DateTime now = WatchClock::now();
+        const DateTime localDayStart(now.year(), now.month(), now.day(), 0, 0, 0);
+        const int64_t utcDayStart = static_cast<int64_t>(localDayStart.unixtime()) -
+                                    static_cast<int64_t>(cfg.timezoneOffsetMin) * 60;
+        const int64_t start = utcDayStart - 3LL * 86400LL;
+        const int64_t end = utcDayStart + 4LL * 86400LL;
         s += "?export";
+        if (tasksOnly) {
+            s += "&componentType=VTODO";
+        } else {
+            s += "&start=" + String(static_cast<unsigned long>(start));
+            s += "&end=" + String(static_cast<unsigned long>(end));
+            s += "&expand=1";
+        }
+    }
+
+    // Config may contain a complete calendar collection URL rather than the
+    // DAV root. Give it the same bounded event export / task-only behavior.
+    if (calendarEndpoint) {
+        const DateTime now = WatchClock::now();
+        const DateTime localDayStart(now.year(), now.month(), now.day(), 0, 0, 0);
+        const int64_t utcDayStart = static_cast<int64_t>(localDayStart.unixtime()) -
+                                    static_cast<int64_t>(cfg.timezoneOffsetMin) * 60;
+        s += "?export";
+        if (tasksOnly) {
+            s += "&componentType=VTODO";
+        } else {
+            s += "&start=" + String(static_cast<unsigned long>(utcDayStart - 3LL * 86400LL));
+            s += "&end=" + String(static_cast<unsigned long>(utcDayStart + 4LL * 86400LL));
+            s += "&expand=1";
+        }
     }
 
     return s;
@@ -220,7 +268,9 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
                       const WatchConfig::Config& cfg,
                       size_t& outEvents, size_t& outTodos) {
     if (url.isEmpty()) return false;
-    DebugLog::log("NET: Fetching ICS from: %s", url.c_str());
+    DebugLog::log("NET: Fetching ICS heap=%lu largest=%lu",
+                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
 
     client.setTimeout(ersa::config::CALDAV_HTTP_TIMEOUT_MS / 1000);
     if (!https.begin(client, url)) {
@@ -249,6 +299,22 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
 
     int code = https.GET();
     DebugLog::log("NET: ICS GET code=%d", code);
+
+    if (code < 0) {
+        char tlsError[96] = {};
+        const int tlsErrorCode = client.lastError(tlsError, sizeof(tlsError));
+        DebugLog::log("NET: CalDAV transport error=%d TLS=%d (%s) free_heap=%lu",
+                      code, tlsErrorCode, tlsError,
+                      static_cast<unsigned long>(ESP.getFreeHeap()));
+        // mbedTLS -0x7F00 is MBEDTLS_ERR_SSL_ALLOC_FAILED. Repeating the same
+        // handshake with URL spelling/task-path fallbacks cannot recover RAM.
+        if (tlsErrorCode == -0x7F00 || strstr(tlsError, "CTR_DRBG") != nullptr ||
+            strstr(tlsError, "allocation") != nullptr) {
+            tlsAllocationFailed = true;
+        }
+        https.end();
+        return false;
+    }
 
     if (https.hasHeader("Set-Cookie")) {
         String sc = https.header("Set-Cookie");
@@ -303,7 +369,8 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
     const DateTime now = WatchClock::now();
     DateTime dayStart(now.year(), now.month(), now.day(), 0, 0, 0);
     const uint32_t dayStartSec = dayStart.unixtime();
-    const uint32_t dayEndSec = dayStartSec + 86400;
+    const uint32_t cacheStartSec = dayStartSec - 3U * 86400U;
+    const uint32_t cacheEndSec = dayStartSec + 4U * 86400U;
 
     while (https.connected() && stream->available()) {
         String line = stream->readStringUntil('\n');
@@ -346,13 +413,10 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
                 uint32_t endEpoch = (curDtEnd[0] != '\0') ? parseIcsDateTimeToEpoch(curDtEnd, cfg.timezoneOffsetMin) : (startEpoch + 3600);
                 if (endEpoch <= startEpoch) endEpoch = startEpoch + 1800;
 
-                bool isToday = false;
-                if (startEpoch < dayEndSec && endEpoch > dayStartSec) {
-                    isToday = true;
-                }
-
-                // Check recurring rules (e.g. daily, weekly)
-                if (!isToday && curRrule[0] != '\0' && startEpoch < dayEndSec) {
+                bool isToday = startEpoch < dayStartSec + 86400U && endEpoch > dayStartSec;
+                // Keep the existing simple recurrence fallback for servers that
+                // do not expand RRULEs; SabreDAV range exports expand them.
+                if (!isToday && curRrule[0] != '\0' && startEpoch < dayStartSec + 86400U) {
                     bool expired = false;
                     const char* untilPtr = strstr(curRrule, "UNTIL=");
                     if (untilPtr) {
@@ -379,8 +443,19 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
                     }
                 }
 
-                if (isToday) {
+                for (uint32_t eventDay = cacheStartSec;
+                     eventDay < cacheEndSec && outEvents < MAX_EVENTS;
+                     eventDay += 86400U) {
+                    const bool overlapsDay = startEpoch < eventDay + 86400U &&
+                                             endEpoch > eventDay;
+                    const bool fallbackToday = eventDay == dayStartSec && isToday;
+                    if ((!overlapsDay && !fallbackToday) ||
+                        countEventsForDay(calendarDayKey(eventDay), outEvents) >= MAX_EVENTS_PER_DAY) {
+                        continue;
+                    }
+
                     safeCopy(events[outEvents].title, curSummary, sizeof(events[0].title));
+                    events[outEvents].dayKey = calendarDayKey(eventDay);
                     if (strchr(curDt, 'T')) {
                         DateTime localStart(startEpoch);
                         snprintf(events[outEvents].timeStr, sizeof(events[0].timeStr),
@@ -388,11 +463,7 @@ bool fetchAndParseIcs(WiFiClientSecure& client, HTTPClient& https, const String&
                     } else {
                         safeCopy(events[outEvents].timeStr, "all day", sizeof(events[0].timeStr));
                     }
-                    DebugLog::log("NET: Event for TODAY [%u] '%s' @ %s",
-                                  unsigned(outEvents), events[outEvents].title, events[outEvents].timeStr);
                     ++outEvents;
-                } else {
-                    DebugLog::log("NET: Ignored non-today event '%s' (dt=%s)", curSummary, curDt);
                 }
             }
             inEvent = false;
@@ -442,8 +513,18 @@ void begin() {
     loadCache();
 }
 
-size_t eventCount() { return numEvents; }
-const CalEvent& getEvent(size_t index) { return events[index < numEvents ? index : 0]; }
+size_t eventCount() { return countEventsForDay(todayKey(), numEvents); }
+
+const CalEvent& getEvent(size_t index) {
+    const uint32_t key = todayKey();
+    for (size_t i = 0; i < numEvents; ++i) {
+        if (events[i].dayKey != key) continue;
+        if (index == 0) return events[i];
+        --index;
+    }
+    static const CalEvent emptyEvent{};
+    return emptyEvent;
+}
 
 size_t todoCount() { return numTodos; }
 const CalTodo& getTodo(size_t index) { return todos[index < numTodos ? index : 0]; }
@@ -648,6 +729,7 @@ bool syncNtp() {
 bool syncAll() {
     const auto& cfg = WatchConfig::get();
     syncing = true;
+    tlsAllocationFailed = false;
 
     if (!connectWiFi(cfg)) {
         syncing = false;
@@ -683,32 +765,33 @@ bool syncAll() {
         size_t parsedTodos = 0;
 
         // Step A: Fetch events calendar
-        String eventsUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, false);
+        String eventsUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, false, false);
         bool ok = fetchAndParseIcs(client, https, eventsUrl, cfg, parsedEvents, parsedTodos);
-        if (!ok && eventsUrl.indexOf("@") != -1) {
-            String retryUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, true);
+        if (!ok && !tlsAllocationFailed && eventsUrl.indexOf("@") != -1) {
+            String retryUrl = buildCalDavUrl(cfg, cfg.caldavCalendar, true, false);
             ok = fetchAndParseIcs(client, https, retryUrl, cfg, parsedEvents, parsedTodos);
         }
 
         // Step B: Fetch tasks calendar if different from events calendar
         bool okTasks = false;
-        if (cfg.caldavTodoPath[0] != '\0' && strcmp(cfg.caldavCalendar, cfg.caldavTodoPath) != 0) {
-            String tasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, false);
+        if (!tlsAllocationFailed && cfg.caldavTodoPath[0] != '\0') {
+            String tasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, false, true);
             size_t extraEvents = 0;
             size_t extraTodos = parsedTodos;
             okTasks = fetchAndParseIcs(client, https, tasksUrl, cfg, extraEvents, extraTodos);
-            if (!okTasks && tasksUrl.indexOf("@") != -1) {
-                String retryTasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, true);
+            if (!okTasks && !tlsAllocationFailed && tasksUrl.indexOf("@") != -1) {
+                String retryTasksUrl = buildCalDavUrl(cfg, cfg.caldavTodoPath, true, true);
                 okTasks = fetchAndParseIcs(client, https, retryTasksUrl, cfg, extraEvents, extraTodos);
             }
             // If configured tasks path returned 404 or failed, fallback to standard Nextcloud "personal" calendar
-            if (!okTasks && strcmp(cfg.caldavTodoPath, ersa::config::FALLBACK_CALDAV_TODO) != 0) {
+            if (!okTasks && !tlsAllocationFailed &&
+                strcmp(cfg.caldavTodoPath, ersa::config::FALLBACK_CALDAV_TODO) != 0) {
                 DebugLog::log("NET: Tasks at '%s' failed/404; trying fallback '%s'",
                               cfg.caldavTodoPath, ersa::config::FALLBACK_CALDAV_TODO);
-                String fallbackTasksUrl = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, false);
+                String fallbackTasksUrl = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, false, true);
                 okTasks = fetchAndParseIcs(client, https, fallbackTasksUrl, cfg, extraEvents, extraTodos);
-                if (!okTasks && fallbackTasksUrl.indexOf("@") != -1) {
-                    String retryFallback = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, true);
+                if (!okTasks && !tlsAllocationFailed && fallbackTasksUrl.indexOf("@") != -1) {
+                    String retryFallback = buildCalDavUrl(cfg, ersa::config::FALLBACK_CALDAV_TODO, true, true);
                     okTasks = fetchAndParseIcs(client, https, retryFallback, cfg, extraEvents, extraTodos);
                 }
             }
@@ -718,13 +801,19 @@ bool syncAll() {
         }
 
         if (ok || okTasks || parsedEvents > 0 || parsedTodos > 0) {
-            numEvents = parsedEvents;
-            numTodos = parsedTodos;
+            // Keep the last on-device snapshot for any calendar component
+            // whose network request failed; a partial sync must not erase it.
+            if (ok) numEvents = parsedEvents;
+            if (okTasks) numTodos = parsedTodos;
             saveCache();
-            snprintf(statusMsg, sizeof(statusMsg), "Synced %u ev, %u todo",
-                     (unsigned)numEvents, (unsigned)numTodos);
-            DebugLog::log("NET: CalDAV sync SUCCESS: %u events for today, %u todos",
-                          (unsigned)numEvents, (unsigned)numTodos);
+            const size_t todaysEvents = eventCount();
+            snprintf(statusMsg, sizeof(statusMsg), "%u today, %u cached",
+                     (unsigned)todaysEvents, (unsigned)numEvents);
+            DebugLog::log("NET: CalDAV sync SUCCESS: today=%u cached=%u todos=%u",
+                          (unsigned)todaysEvents, (unsigned)numEvents, (unsigned)numTodos);
+        } else if (tlsAllocationFailed) {
+            safeCopy(statusMsg, "CalDAV skipped: low memory", sizeof(statusMsg));
+            DebugLog::log("NET: CalDAV sync stopped after TLS allocation failure; skipped remaining URL retries");
         } else {
             safeCopy(statusMsg, ersa::strings::MSG_CALDAV_FAILED, sizeof(statusMsg));
             DebugLog::log("NET: CalDAV HTTP request failed");

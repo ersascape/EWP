@@ -8,6 +8,7 @@ namespace NetSync {
 struct CalEvent {
     char title[32];
     char timeStr[20];
+    uint32_t dayKey; // YYYYMMDD in the watch's local calendar
 };
 
 struct CalTodo {
@@ -16,7 +17,9 @@ struct CalTodo {
     char uid[36];
 };
 
-constexpr size_t MAX_EVENTS = 6;
+constexpr size_t MAX_EVENTS_PER_DAY = 6;
+constexpr size_t CALENDAR_CACHE_DAYS = 7;
+constexpr size_t MAX_EVENTS = MAX_EVENTS_PER_DAY * CALENDAR_CACHE_DAYS;
 constexpr size_t MAX_TODOS = 12;
 
 void begin();
