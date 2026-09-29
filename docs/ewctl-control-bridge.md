@@ -6,7 +6,26 @@ Provide a small, scriptable USB control surface for inspecting and operating an 
 
 The first transport is the ESP32-C3 USB Serial/JTAG console. Keep the protocol transport-neutral so a later BLE or network transport can reuse command handling with a separate policy.
 
-The host client lives at `scripts/ewctl.py` and uses Python, `pyserial`, and Rich (`python3 -m pip install -r requirements-ewctl.txt`). It renders readable Rich tables by default; pass `--json` for machine-readable output. Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py power cpu-freq-set 40`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
+The host client lives at `scripts/ewctl.py` and uses Python, `pyserial`, and Rich (`python3 -m pip install -r requirements-ewctl.txt`). It renders readable Rich tables by default; pass `--json` for machine-readable output. Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py power cpu-freq-set 40`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Follow mode streams the live USB console directly without sending `logs.read` requests; redirect it with `python3 scripts/ewctl.py logs --follow > watch.log` or use `logs --output watch.log`. Stop raw capture with Ctrl-C. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
+
+`ewctl flash firmware.bin` flashes an app image through the ESP32-C3 ROM bootloader. `ewctl flash ewp-factory.bin` flashes the factory image and resets saved settings. The image argument can be omitted to use the local build. Tagged GitHub releases can be downloaded, verified against their SHA-256 manifest, cached, and flashed with `ewctl flash release 0.1.2`; use `latest` for the latest stable release and `--factory` for its factory image. This uses the same ROM bootloader process and esptool wrapper as `scripts/flash_firmware.sh`, not the USB control bridge.
+
+`ewctl power log` samples battery voltage, CPU frequency, power state, BLE state, uptime, and heap to a timestamped CSV. Set `--interval 30 --duration 7200 --output run.csv`; duration `0` records until Ctrl-C. USB monitoring blocks the watch's normal sleep policy, so this helps compare telemetry but does not measure normal battery life.
+
+`ewctl debug bundle` creates a ZIP bug report with status snapshots and up to 16 recent logs. It redacts Wi-Fi SSIDs, tokens, and URLs from log lines. Add `--include-coredump` to decode and include the raw core; that opt-in dump may contain arbitrary task memory and should be reviewed before sharing.
+
+## Panic coredumps
+
+New firmware builds save ESP-IDF panic coredumps in the existing 64 KiB `coredump` flash partition, using ELF format and a CRC32 integrity check. After a panic and reboot, connect USB and decode the saved dump with the exact ELF used to build the flashed firmware:
+
+```sh
+python3 -m pip install -r requirements-ewctl.txt
+python3 scripts/ewctl.py --port /dev/ttyACM0 debug coredump
+```
+
+The command reads the coredump partition over the ROM bootloader, prints task/register/backtrace details, and uses `.pio/build/ErsaWearable/firmware.elf` by default. Retain that ELF for each flashed build: symbols from a different build can produce misleading function names. If the ELF is elsewhere, pass `--elf /path/to/firmware.elf`; if ESP-IDF is installed outside this checkout, pass `--idf-path /path/to/esp-idf`. The decoder also needs the RISC-V ESP GDB toolchain; the local PlatformIO package is detected automatically, otherwise put `riscv32-esp-elf-gdb` on `PATH` or pass `--gdb`. Use `--save-core panic.elf` to retain the extracted dump for sharing. A missing or invalid saved dump is reported by ESP-IDF's decoder.
+
+Core dumps are disabled in firmware builds predating this setting. Flash the new firmware before expecting a panic dump. Since a dump captures task memory, it may include transient notification or other user data; review it before sharing the saved core file.
 
 ## Architecture
 

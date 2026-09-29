@@ -120,7 +120,8 @@ Apple ANCS, AMS, and CTS are one current companion source. `IBluetooth` now owns
 - **Portable Protocol Decoders**:
   - ANCS and AMS byte decoding is independent of the ESP32 BLE transport. `ICompanionSource` is the normalized provider contract; MPRIS and Android adapters are planned, not included yet.
 
-- **USB development control (`ewctl`)**: Read system, battery, BLE, power, and diagnostic-log status; temporarily pin CPU frequency to 40/80/160 MHz for power testing and restore automatic 40–160 MHz scaling. See the [feature catalog](docs/FEATURES.md) and [USB control guide](docs/ewctl-control-bridge.md).
+- **USB development control (`ewctl`)**: Read system, battery, BLE, power, and diagnostic-log status; log power telemetry to CSV; create a redacted support bundle; flash checksum-verified GitHub releases; decode saved panic core dumps. See the [feature catalog](docs/FEATURES.md) and [USB control guide](docs/ewctl-control-bridge.md).
+- **Firmware flashing (`ewctl flash`)**: Flash a downloaded app image or factory image through the ESP32-C3 ROM bootloader using the same validated script as the firmware workflow.
 
 ---
 
@@ -304,6 +305,11 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 power
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
+python3 scripts/ewctl.py --port /dev/ttyACM0 flash ~/Downloads/firmware.bin
+python3 scripts/ewctl.py --port /dev/ttyACM0 flash release 0.1.2
+python3 scripts/ewctl.py --port /dev/ttyACM0 power log --interval 30 --duration 3600
+python3 scripts/ewctl.py --port /dev/ttyACM0 debug bundle
+python3 scripts/ewctl.py --port /dev/ttyACM0 debug coredump
 ```
 
 `ewctl` displays readable Rich tables by default; add `--json` for scripts.

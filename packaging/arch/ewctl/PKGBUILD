@@ -6,13 +6,17 @@ pkgdesc='USB command-line diagnostics and control for Ersa Wearable watches'
 arch=('any')
 url='https://github.com/ersascape/ErsaWearableOS'
 license=('MIT')
-depends=('python' 'python-pyserial' 'python-rich')
+depends=('python' 'python-pyserial' 'python-rich' 'python-esptool' 'python-construct' 'python-pygdbmi')
 provides=('ewctl')
 source=("ErsaWearableOS::git+https://github.com/ersascape/ErsaWearableOS.git#tag=ewp-${pkgver}")
 sha256sums=('SKIP')
 
 package() {
   install -Dm755 "$srcdir/ErsaWearableOS/scripts/ewctl.py" "$pkgdir/usr/bin/ewctl"
+  install -Dm644 "$srcdir/ErsaWearableOS/scripts/ewctl_compat/future/__init__.py" \
+    "$pkgdir/usr/lib/ewctl/ewctl_compat/future/__init__.py"
+  install -Dm644 "$srcdir/ErsaWearableOS/scripts/ewctl_compat/future/utils.py" \
+    "$pkgdir/usr/lib/ewctl/ewctl_compat/future/utils.py"
   install -Dm644 "$srcdir/ErsaWearableOS/docs/ewctl-control-bridge.md" \
     "$pkgdir/usr/share/doc/ewctl/ewctl-control-bridge.md"
   install -Dm644 "$srcdir/ErsaWearableOS/docs/FEATURES.md" \

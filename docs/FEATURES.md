@@ -68,7 +68,10 @@ integrations and calls out areas that still need measurements on the watch.
 ## Developer and release tooling
 
 - `ewctl` over USB Serial/JTAG can query firmware/system, battery, BLE, power,
-  and a bounded log ring. It also supports the temporary CPU-frequency override.
+  and a bounded log ring. It also supports temporary CPU-frequency overrides,
+  CSV power logging, redacted bug-report bundles, checksum-verified release
+  flashing, and decoding flash-backed ESP-IDF panic coredumps with the matching
+  ELF.
 - `make test` runs host-side protocol and service tests; `make firmware` builds
   the ESP32-C3 firmware.
 - GitHub Actions builds app and factory images for tagged releases and attaches
@@ -89,6 +92,9 @@ integrations and calls out areas that still need measurements on the watch.
   database over HTTPS. Tagged releases attach the package and matching
   `ersa-ewctl.db` and `ersa-ewctl.files` assets. Build locally with `makepkg -si`
   if preferred.
+- Firmware updates currently use the ESP32-C3 ROM bootloader over USB. Safe
+  over-the-air updating is not implemented yet: the current partition table has
+  one app slot and no rollback slot.
 
 ## Useful commands
 
@@ -101,6 +107,10 @@ python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
 python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
 python3 scripts/ewctl.py --port /dev/ttyACM0 logs --follow
+python3 scripts/ewctl.py --port /dev/ttyACM0 power log --interval 30 --duration 3600
+python3 scripts/ewctl.py --port /dev/ttyACM0 debug bundle
+python3 scripts/ewctl.py --port /dev/ttyACM0 flash release 0.1.2
+python3 scripts/ewctl.py --port /dev/ttyACM0 debug coredump
 ```
 
 `power` reports the measured CPU frequency and `cpu_test_override_mhz` (`0`
@@ -111,6 +121,10 @@ management. The requested profile survives software restart in RTC memory.
 The 40 MHz profile can rise to 80 MHz while BLE holds its APB lock. Run
 `power cpu-freq-get` after reboot to confirm the measured clock. Rich tables are
 the default; add `--json` for machine-readable output.
+
+New firmware saves panic coredumps in the reserved flash partition. Decode them
+with `debug coredump` before another panic overwrites the saved dump; see the
+[USB control guide](ewctl-control-bridge.md) for ELF matching and setup.
 
 ## Known validation limits
 

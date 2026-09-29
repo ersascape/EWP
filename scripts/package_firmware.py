@@ -62,8 +62,10 @@ def main() -> None:
     (OUTPUT / "FLASHING.md").write_text(
         """# Ersa Wearable firmware images
 
-- `firmware.bin` is the application image for OTA or updating an already
-  installed matching bootloader and partition table. Its app offset is `0x10000`.
+- `firmware.bin` is an application image for updating a watch with the matching
+  bootloader and partition table via the ROM bootloader. Its app offset is
+  `0x10000`; the current partition table has only one app slot, so this image
+  does not support safe over-the-air updates or rollback.
 - `ewp-factory.bin` is a merged ESP32-C3 image for factory flashing at offset
   `0x0`. It includes the bootloader at `0x0`, the partition table at `0x8000`,
   the OTA boot data at `0xE000`, and the application at `0x10000`. Factory
