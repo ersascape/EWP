@@ -39,6 +39,7 @@ uint8_t shownDay = 0;
 bool shownRtcHealthy = false;
 uint32_t lastFrameEnd = 0;
 uint32_t lastActivityMs = 0;
+uint32_t lastUserInputMs = 0;
 uint16_t partialFrames = 0;
 bool firstFrame = true;
 bool watchfaceRectPending = false;
@@ -350,6 +351,7 @@ void WatchUi::begin() {
 
     renderCurrentApp();
     lastActivityMs = millis();
+    lastUserInputMs = lastActivityMs;
     DebugLog::log("UI: boot complete, active app: %s",
                   appManager.getActiveApp() ? appManager.getActiveApp()->getTitle() : "none");
 }
@@ -358,6 +360,7 @@ void WatchUi::onButton(Buttons::Event legacyEvent) {
     if (legacyEvent == Buttons::Event::None) return;
 
     lastActivityMs = millis();
+    lastUserInputMs = lastActivityMs;
     displayManager.noteActivity(lastActivityMs);
     powerManager.noteActivity(lastActivityMs);
     setSleepAllowed(false);
@@ -390,6 +393,7 @@ void WatchUi::tick() {
     board.getInput().poll();
     if (Buttons::isPressed()) {
         lastActivityMs = millis();
+        lastUserInputMs = lastActivityMs;
         displayManager.noteActivity(lastActivityMs);
         powerManager.noteActivity(lastActivityMs);
         setSleepAllowed(false);
@@ -412,6 +416,7 @@ void WatchUi::tick() {
     }
 
     const uint32_t idleMs = (nowMs >= lastActivityMs) ? (nowMs - lastActivityMs) : 0;
+    const uint32_t userIdleMs = (nowMs >= lastUserInputMs) ? (nowMs - lastUserInputMs) : 0;
 
     // Auto-return to watchface after 60 seconds of inactivity on other screens (except during calls)
     if (appManager.getActiveApp() != nullptr &&
@@ -449,7 +454,10 @@ void WatchUi::tick() {
     const auto callState = bluetoothManager.getCallState();
     const bool appBusy = (currentApp && strcmp(currentApp->getId(), "app_portal") == 0) ||
         callState == ersa::services::CallState::Incoming || callState == ersa::services::CallState::Active;
-    const bool sleepEligible = automaticSleepReady && idleMs >= 30000 && !appBusy &&
+    // Passive BLE traffic must wake/process the UI but must not continually
+    // restart the inactivity timer. Buttons represent deliberate use; the
+    // BLE callback notification wakes this task independently.
+    const bool sleepEligible = automaticSleepReady && userIdleMs >= 30000 && !appBusy &&
                                !NetSync::isSyncing() && !board.getEsp32Display().isBusy();
     setSleepAllowed(sleepEligible);
 
