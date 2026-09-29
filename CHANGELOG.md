@@ -1,5 +1,20 @@
 # Changelog
 
+## ewp-0.1.2
+
+- Split the companion-provider contract (`ICompanionSource`) from BLE transport
+  (`IBluetooth`) so Apple, Android, and MPRIS integrations can be added as
+  independent sources. Apple ANCS/AMS/CTS remains the implemented provider.
+- Added a bounded USB Serial/JTAG control bridge and `ewctl` host CLI for system,
+  battery, BLE, power, and log inspection.
+- Added a temporary CPU-frequency test override: pin to 40, 80, or 160 MHz, or
+  restore automatic 40–160 MHz power management with `cpu_mhz: 0`.
+- Expanded battery sample reporting, diagnostic log access, architecture docs,
+  and simulated notification/call/media previews.
+
+See [release notes](release-notes/ewp-0.1.2.md) and the
+[feature catalog](docs/FEATURES.md) for the full feature inventory and caveats.
+
 ## ewp-0.1.1
 
 - Fixed ANCS attribute requests for notifications that advertise a negative

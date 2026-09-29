@@ -96,7 +96,7 @@ Apple ANCS, AMS, and CTS are one current companion source. `IBluetooth` now owns
 - **Fast, Flicker-Free Partial Refresh**:
   - Panel controller kept energized during user interaction for **~450ms raw partial updates** with zero black/white blinking.
   - Display refresh bug resolved: screen only redraws on minute ticks, button clicks, or state changes.
-  - Automatic low-power sleep after 8 seconds of inactivity.
+  - Automatic light sleep is managed by the power policy after inactivity; exact sleep residency depends on active BLE/peripheral locks.
 - **Multi-Tier Clock Calibration & NTP Fallbacks**:
   - **Tier 1 (SNTP Pool)**: Multi-server SNTP UDP sync (`pool.ntp.org`, `time.google.com`, `time.cloudflare.com`, `time.apple.com`, `time.nist.gov`).
   - **Tier 2 (HTTP Time Fallback)**: If UDP port 123 is blocked by a cellular phone hotspot or guest Wi-Fi, the watch automatically falls back to HTTP Date header sync (`clients3.google.com`, `worldtimeapi.org`, `cloudflare.com`) over port 80 TCP, guaranteeing accurate time calibration in any network environment.
@@ -119,6 +119,8 @@ Apple ANCS, AMS, and CTS are one current companion source. `IBluetooth` now owns
   - Status reports connection and Apple service readiness. B1 schedules BLE advertising again when disconnected; advertising start is checked and retried after a disconnect.
 - **Portable Protocol Decoders**:
   - ANCS and AMS byte decoding is independent of the ESP32 BLE transport. `ICompanionSource` is the normalized provider contract; MPRIS and Android adapters are planned, not included yet.
+
+- **USB development control (`ewctl`)**: Read system, battery, BLE, power, and diagnostic-log status; temporarily pin CPU frequency to 40/80/160 MHz for power testing and restore automatic 40–160 MHz scaling. See the [feature catalog](docs/FEATURES.md) and [USB control guide](docs/ewctl-control-bridge.md).
 
 ---
 
@@ -235,15 +237,12 @@ Compile the production firmware using PlatformIO:
 make firmware
 ```
 
-The firmware is built as an ESP-IDF 4.4 project for the ESP32-C3, with Arduino
-included as an ESP-IDF component while the current board drivers are migrated
-behind the hardware interfaces. This keeps the existing display, RTC, networking,
-and Apple BLE implementation working while ESP-IDF owns the project configuration
-and FreeRTOS power management. Tickless idle and Bluetooth modem sleep are enabled
-in `sdkconfig.defaults`. Automatic light sleep is allowed after 30 seconds without
-button input; BLE events and the minute timer wake the UI task, while active calls
-and the setup portal keep the watch awake. `huge_app.csv` preserves the current
-4 MB flash layout. Battery runtime still needs measurement on the assembled watch.
+The firmware targets ESP32-C3 with Arduino as an ESP-IDF component. ESP-IDF owns
+project configuration and FreeRTOS power management. Tickless idle and Bluetooth
+modem sleep are enabled in `sdkconfig.defaults`; the application uses inactivity
+and peripheral activity to govern automatic light sleep. `huge_app.csv` preserves
+the current 4 MB flash layout. Battery runtime and exact sleep residency still
+need measurement on the assembled watch.
 
 The generated firmware remains at `.pio/build/ErsaWearable/firmware.bin`. Run
 `make test` for the host-side protocol and service tests.
@@ -255,8 +254,8 @@ artifact. To publish downloadable firmware under **GitHub Releases**, push an
 project history is in [CHANGELOG.md](CHANGELOG.md):
 
 ```bash
-git tag ewp-0.1.1
-git push origin ewp-0.1.1
+git tag ewp-0.1.2
+git push origin ewp-0.1.2
 ```
 
 Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for
@@ -293,6 +292,39 @@ After `make firmware` has installed Adafruit GFX, run this on a host with `g++` 
 ```
 
 The script compiles the production notification, call, and now-playing renderers against Adafruit GFX's 200×200 host canvas. ImageMagick joins and doubles the pixel size for the [preview](docs/images/notification_call_media_simulation.png). It renders simulated notification, caller, and track data; no device or BLE connection is needed. These previews verify layout, while device testing is still needed for button timing and e-paper refresh.
+
+### 6. USB Development Control
+
+Install the host dependencies with `python3 -m pip install -r requirements-ewctl.txt`.
+Examples (close any other serial monitor first):
+
+```bash
+python3 scripts/ewctl.py --port /dev/ttyACM0 status
+python3 scripts/ewctl.py --port /dev/ttyACM0 power
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-get
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 40
+python3 scripts/ewctl.py --port /dev/ttyACM0 power cpu-freq-set 0
+```
+
+`ewctl` displays readable Rich tables by default; add `--json` for scripts.
+The frequency override is volatile: 0 restores automatic 40–160 MHz power
+management. See the [USB control guide](docs/ewctl-control-bridge.md).
+
+For Arch Linux, install the release repository by adding this to
+`/etc/pacman.conf`:
+
+```ini
+[ersa-ewctl]
+SigLevel = Optional
+Server = https://ersascape.github.io/ErsaWearableOS/arch/x86_64
+```
+
+Then run `sudo pacman -Syu ewctl`. GitHub Pages publishes the package repository
+at this path and tagged GitHub releases also carry the package assets.
+Alternatively, build `packaging/arch/ewctl/PKGBUILD` with `makepkg -si`.
+The planned custom package hostname is `pkgs-wearables.ersa.dev`; once its DNS
+and GitHub Pages custom-domain settings are configured, use
+`https://pkgs-wearables.ersa.dev/arch/x86_64` as the repository server.
 
 ---
 
