@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - master
+    tags:
+      - 'ewp-*'
     paths:
       - 'docs/**'
       - 'companion/**'
+      - 'packaging/arch/**'
+      - 'scripts/package_ewctl_arch.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -30,10 +34,24 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+      - name: Assemble documentation and Arch repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .site/arch/x86_64
+          cp -a docs/. .site/
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == ewp-* ]]; then
+            ./scripts/package_ewctl_arch.sh
+            cp .pio/release/ewctl* .site/arch/x86_64/
+          else
+            gh release download --repo "$GITHUB_REPOSITORY" \
+              --pattern 'ewctl*' --dir .site/arch/x86_64 || \
+              echo 'No ewctl package in the latest release yet; publishing docs only.'
+          fi
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'docs'
+          path: '.site'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

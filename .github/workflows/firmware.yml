@@ -63,10 +63,30 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  package-ewctl:
+    name: Build Arch Linux ewctl package and repository index
+    if: startsWith(github.ref, 'refs/tags/ewp-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Build package in Arch Linux
+        run: ./scripts/package_ewctl_arch.sh
+      - name: Upload package repository artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ewctl-arch-repo-${{ github.sha }}
+          path: |
+            .pio/release/ewctl-*.pkg.tar.zst
+            .pio/release/ewctl.db
+            .pio/release/ewctl.files
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/ewp-')
-    needs: build
+    needs: [build, package-ewctl]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -78,6 +98,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ewp-firmware-${{ github.sha }}
+          path: .pio/release
+      - name: Download ewctl Arch repository artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ewctl-arch-repo-${{ github.sha }}
           path: .pio/release
 
       - name: Create release and attach firmware
@@ -91,3 +116,6 @@ jobs:
             .pio/release/ewp-factory.bin
             .pio/release/SHA256SUMS
             .pio/release/FLASHING.md
+            .pio/release/ewctl-*.pkg.tar.zst
+            .pio/release/ewctl.db
+            .pio/release/ewctl.files
