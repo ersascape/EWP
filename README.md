@@ -218,9 +218,10 @@ included as an ESP-IDF component while the current board drivers are migrated
 behind the hardware interfaces. This keeps the existing display, RTC, networking,
 and Apple BLE implementation working while ESP-IDF owns the project configuration
 and FreeRTOS power management. Tickless idle and Bluetooth modem sleep are enabled
-in `sdkconfig.defaults`; automatic light sleep is currently disabled at runtime
-while button wake and e-paper timing are validated. `huge_app.csv` preserves the
-current 4 MB flash layout.
+in `sdkconfig.defaults`. Automatic light sleep is allowed after 30 seconds without
+button input; BLE events and the minute timer wake the UI task, while active calls
+and the setup portal keep the watch awake. `huge_app.csv` preserves the current
+4 MB flash layout. Battery runtime still needs measurement on the assembled watch.
 
 The generated firmware remains at `.pio/build/ErsaWearable/firmware.bin`. Run
 `make test` for the host-side protocol and service tests.
@@ -228,11 +229,12 @@ The generated firmware remains at `.pio/build/ErsaWearable/firmware.bin`. Run
 The `Firmware` GitHub Actions workflow also builds on pull requests and pushes to
 `master`, then stores the application image and factory image as a 30-day workflow
 artifact. To publish downloadable firmware under **GitHub Releases**, push an
-`ewp-*` version tag such as the initial release tag:
+`ewp-*` version tag. Release notes live in `release-notes/` and the cumulative
+project history is in [CHANGELOG.md](CHANGELOG.md):
 
 ```bash
-git tag ewp-0.1
-git push origin ewp-0.1
+git tag ewp-0.1.1
+git push origin ewp-0.1.1
 ```
 
 Each tagged release includes `firmware.bin` for app updates, `ewp-factory.bin` for

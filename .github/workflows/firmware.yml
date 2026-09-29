@@ -71,6 +71,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+
       - name: Download firmware artifact
         uses: actions/download-artifact@v4
         with:
@@ -80,7 +83,8 @@ jobs:
       - name: Create release and attach firmware
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes/${{ github.ref_name }}.md
+          generate_release_notes: false
           fail_on_unmatched_files: true
           files: |
             .pio/release/firmware.bin
