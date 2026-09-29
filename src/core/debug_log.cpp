@@ -14,7 +14,8 @@
 
 namespace {
 constexpr uint32_t HEARTBEAT_INTERVAL_MS = 10000;
-constexpr size_t LOG_RING_CAPACITY = 16;
+// Keep a short actionable history without reserving excessive RAM for logs.
+constexpr size_t LOG_RING_CAPACITY = 8;
 DebugLog::Record logRing[LOG_RING_CAPACITY] = {};
 uint32_t nextLogSequence = 1;
 bool protocolMode = false;
@@ -47,6 +48,17 @@ const char* reasonName(uint32_t reason) {
     }
 }
 
+bool isRoutineLog(const char* format) {
+    // These fire continuously during normal use and drown out useful events.
+    static constexpr const char* QUIET_PREFIXES[] = {
+        "LOOP boot=", "BUTTON raw ", "EPD begin ", "EPD end duration=",
+    };
+    for (const char* prefix : QUIET_PREFIXES) {
+        if (strncmp(format, prefix, strlen(prefix)) == 0) return true;
+    }
+    return false;
+}
+
 void recordBoot() {
     constexpr uint32_t magic = 0x57415431;
     Preferences prefs;
@@ -68,13 +80,14 @@ void recordBoot() {
 
 void DebugLog::begin() {
     recordBoot();
-    Serial.setTxBufferSize(1024);
+    Serial.setTxBufferSize(512);
     Serial.begin(115200);
     Serial.setTxTimeoutMs(0);
     // No while (!Serial): the watch must run with no USB monitor attached.
 }
 
 void DebugLog::log(const char* format, ...) {
+    if (!format || isRoutineLog(format)) return;
     char text[240];
     const int prefix = snprintf(text, sizeof(text), "[%lu] ", (unsigned long)millis());
     va_list args;

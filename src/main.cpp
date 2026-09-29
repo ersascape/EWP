@@ -22,6 +22,9 @@ void setup() {
     esp_log_level_set("gpio", ESP_LOG_WARN);
     // Logs use USB Serial/JTAG. UART0 GPIO20/21 remain assigned to the EPD.
     DebugLog::begin();
+    // Keep vendor Wi-Fi/Bluetooth chatter to warnings/errors; the application
+    // ring retains concise state changes and actionable diagnostics.
+    esp_log_level_set("*", ESP_LOG_WARN);
     DebugLog::log("BOOT starting config");
     WatchConfig::begin();
 #if defined(CONFIG_PM_ENABLE) && CONFIG_PM_ENABLE && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE) && CONFIG_FREERTOS_USE_TICKLESS_IDLE

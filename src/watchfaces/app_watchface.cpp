@@ -3,7 +3,6 @@
 #include "ersa/app/application_manager.h"
 #include "ersa/services/bluetooth_manager.h"
 #include "core/watch_clock.h"
-#include "core/net_sync.h"
 #include "core/debug_log.h"
 
 #if defined(ARDUINO)
@@ -35,8 +34,11 @@ void AppWatchface::onEvent(const events::Event& event) {
             DebugLog::log("NAV: watchface top-button click -> app drawer");
             app::ApplicationManager::instance().switchTo("app_drawer");
         } else if (event.button.button == events::ButtonId::Button2) {
-            NetSync::syncAll();
-            app::ApplicationManager::instance().markDirty(false);
+            // Keep a tap on the clock navigation-only. Full Wi-Fi/CalDAV sync
+            // blocks the UI and can fail under BLE heap pressure; launch it
+            // deliberately from Agenda or Tasks instead.
+            DebugLog::log("NAV: watchface action-button click -> app drawer");
+            app::ApplicationManager::instance().switchTo("app_drawer");
         }
     } else if (event.type == events::EventType::ButtonLongPressed) {
         if (event.button.button == events::ButtonId::Button1) {
