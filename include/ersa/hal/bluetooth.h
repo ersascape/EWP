@@ -27,6 +27,7 @@ enum class BleMediaAction : uint8_t {
 using BleCallCallback = void (*)(BleCallAction action, const char* caller, const char* number, void* userData);
 using BleMediaCallback = void (*)(bool playing, const char* title, const char* artist, void* userData);
 using BleConnectionCallback = void (*)(bool connected, void* userData);
+using BleTimeCallback = void (*)(uint32_t localEpoch, void* userData);
 // Null title/message remove one UID; null app as well clears the protocol session.
 using BleNotificationCallback = void (*)(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* userData);
 
@@ -48,6 +49,7 @@ public:
     virtual void setMediaCallback(BleMediaCallback cb, void* userData) = 0;
     virtual void setConnectionCallback(BleConnectionCallback cb, void* userData) = 0;
     virtual void setNotificationCallback(BleNotificationCallback cb, void* userData) = 0;
+    virtual void setTimeCallback(BleTimeCallback cb, void* userData) { (void)cb; (void)userData; }
 
     // Capabilities describe the connected provider, independently of the UI.
     virtual bool supportsDial() const { return false; }

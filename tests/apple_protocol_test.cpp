@@ -1,5 +1,6 @@
 #include "ersa/protocols/apple_notifications.h"
 #include "ersa/protocols/apple_media.h"
+#include "ersa/protocols/ble_current_time.h"
 #include <assert.h>
 #include <stdio.h>
 #include <vector>
@@ -8,6 +9,14 @@
 using namespace ersa::protocols;
 
 void test_apple_protocols() {
+    const uint8_t cts[] = {0xea, 0x07, 9, 29, 12, 34, 56, 2, 0, 0}; // 2026-09-29 12:34:56
+    uint32_t ctsEpoch = 0;
+    assert(decodeCurrentTime(cts, sizeof(cts), ctsEpoch));
+    assert(ctsEpoch == 1790685296UL);
+    uint8_t invalidCts[sizeof(cts)];
+    memcpy(invalidCts, cts, sizeof(cts)); invalidCts[2] = 13;
+    assert(!decodeCurrentTime(invalidCts, sizeof(invalidCts), ctsEpoch));
+    assert(!decodeCurrentTime(cts, sizeof(cts) - 1, ctsEpoch));
     const uint32_t uid = 0x89abcdef;
     std::vector<uint8_t> response = {0, 0xef, 0xcd, 0xab, 0x89, 1, 5, 0, 'A','l','i','c','e',
                                    3, 5, 0, 'H','e','l','l','o'};
@@ -90,8 +99,10 @@ void test_apple_protocols() {
     const uint8_t artist[] = {2, 0, 0, 'A'};
     const uint8_t play[] = {0, 1, 0, '1', ',', '1', ',', '0'};
     assert(media.update(title, sizeof(title)) && strcmp(media.title, "Song") == 0);
+    assert(!media.update(title, sizeof(title))); // repeated AMS values do not invalidate the UI
     assert(media.update(artist, sizeof(artist)) && strcmp(media.artist, "A") == 0);
     assert(media.update(play, sizeof(play)) && media.playing);
+    assert(!media.update(play, sizeof(play)));
     const uint8_t emptyTitle[] = {2, 2, 0};
     assert(media.update(emptyTitle, sizeof(emptyTitle)) && !media.title[0]);
     assert(!media.update(play, 2));

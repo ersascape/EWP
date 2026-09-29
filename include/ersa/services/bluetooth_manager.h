@@ -31,6 +31,7 @@ struct AppNotification {
 
 class BluetoothManager {
 public:
+    using WakeCallback = void (*)(void* user);
     static BluetoothManager& instance();
     static void setInstance(BluetoothManager* inst);
 
@@ -38,6 +39,7 @@ public:
 
     Result<void> init();
     void tick();
+    void setWakeCallback(WakeCallback callback, void* user) { wakeCallback_ = callback; wakeUserData_ = user; }
     bool canDial() const { return isConnected() && ble_.supportsDial(); }
     bool canHangup() const { return isConnected() && ble_.supportsHangup(); }
     bool notificationsReady() const { return ble_.notificationsReady(); }
@@ -100,6 +102,8 @@ private:
 #if defined(ARDUINO)
     void* incomingQueue_{nullptr};
 #endif
+    WakeCallback wakeCallback_{nullptr};
+    void* wakeUserData_{nullptr};
     hal::IBluetooth& ble_;
     events::EventBus& bus_;
 

@@ -17,6 +17,7 @@ public:
     void setCallCallback(BleCallCallback cb, void* userData);
     void setMediaCallback(BleMediaCallback cb, void* userData);
     void setNotificationCallback(BleNotificationCallback cb, void* userData);
+    void setTimeCallback(BleTimeCallback cb, void* userData);
 
     void startDiscovery(const esp_bd_addr_t bda, esp_ble_addr_type_t addrType = BLE_ADDR_TYPE_RANDOM);
     void authenticationComplete(bool success);
@@ -50,6 +51,7 @@ public:
     void setCallCallback(BleCallCallback, void*) {}
     void setMediaCallback(BleMediaCallback, void*) {}
     void setNotificationCallback(BleNotificationCallback, void*) {}
+    void setTimeCallback(BleTimeCallback, void*) {}
     void startDiscovery(const uint8_t*, uint8_t = 0) {}
     void authenticationComplete(bool) {}
     void stop() {}

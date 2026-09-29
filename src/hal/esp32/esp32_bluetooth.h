@@ -23,6 +23,7 @@ public:
     void setMediaCallback(BleMediaCallback cb, void* userData) override;
     void setConnectionCallback(BleConnectionCallback cb, void* userData) override;
     void setNotificationCallback(BleNotificationCallback cb, void* userData) override;
+    void setTimeCallback(BleTimeCallback cb, void* userData) override;
 
     bool supportsDial() const override;
     bool supportsHangup() const override;

@@ -1,4 +1,5 @@
 #include "ersa/services/bluetooth_manager.h"
+#include "ersa/services/storage_service.h"
 #include <string.h>
 
 #if defined(ARDUINO)
@@ -57,6 +58,23 @@ BluetoothManager::BluetoothManager(hal::IBluetooth& ble, events::EventBus& bus)
     : ble_(ble), bus_(bus) {}
 
 Result<void> BluetoothManager::init() {
+    auto& storage = StorageService::instance();
+    storage.init();
+    recentCount_ = static_cast<size_t>(storage.getInt("recent_count", 0));
+    if (recentCount_ > MAX_RECENTS) recentCount_ = MAX_RECENTS;
+    for (size_t i = 0; i < recentCount_; ++i) {
+        char key[16];
+        snprintf(key, sizeof(key), "recent_name_%u", unsigned(i));
+        const std::string name = storage.getString(key);
+        snprintf(key, sizeof(key), "recent_num_%u", unsigned(i));
+        const std::string number = storage.getString(key);
+        snprintf(key, sizeof(key), "recent_time_%u", unsigned(i));
+        strncpy(recents_[i].name, name.c_str(), sizeof(recents_[i].name) - 1);
+        strncpy(recents_[i].number, number.c_str(), sizeof(recents_[i].number) - 1);
+        recents_[i].timestampEpoch = static_cast<uint32_t>(storage.getInt(key, 0));
+        recents_[i].name[sizeof(recents_[i].name) - 1] = '\0';
+        recents_[i].number[sizeof(recents_[i].number) - 1] = '\0';
+    }
 #if defined(ARDUINO)
     if (!incomingQueue_) incomingQueue_ = xQueueCreate(24, sizeof(events::Event));
     if (!incomingQueue_) return Result<void>(ErrorCode::OutOfMemory, "BLE event queue");
@@ -65,6 +83,14 @@ Result<void> BluetoothManager::init() {
     ble_.setMediaCallback(onBleMedia, this);
     ble_.setConnectionCallback(onBleConnection, this);
     ble_.setNotificationCallback(onBleNotification, this);
+    ble_.setTimeCallback([](uint32_t epoch, void* user) {
+        auto* self = static_cast<BluetoothManager*>(user);
+        if (self) {
+            if (self->wakeCallback_) self->wakeCallback_(self->wakeUserData_);
+            self->bus_.post(events::Event::createTimeSync(
+                epoch, events::TimeSource::BleCurrentTime, millis()));
+        }
+    }, this);
 
     Result<void> res = ble_.init();
     if (res.isOk()) ble_.startAdvertising();
@@ -135,6 +161,7 @@ void BluetoothManager::dial(const char* number, const char* name) {
 void BluetoothManager::dialRecent(size_t index) {
     if (recentCount_ == 0) return;
     if (index >= recentCount_) index = 0;
+    if (!recents_[index].number[0]) return;
     dial(recents_[index].number, recents_[index].name);
 }
 
@@ -147,27 +174,52 @@ const RecentCall& BluetoothManager::getRecentCall(size_t index) const {
 }
 
 void BluetoothManager::addRecentCall(const char* name, const char* number) {
-    if (!number || number[0] == '\0') return;
+    const bool hasName = name && name[0];
+    const bool hasNumber = number && number[0];
+    if (!hasName && !hasNumber) return;
 
-    // Shift entries down to make room at index 0
-    size_t copyLimit = (recentCount_ < MAX_RECENTS) ? recentCount_ : (MAX_RECENTS - 1);
-    for (size_t i = copyLimit; i > 0; --i) {
-        recents_[i] = recents_[i - 1];
-    }
-
-    if (name && name[0] != '\0') {
-        strncpy(recents_[0].name, name, sizeof(recents_[0].name) - 1);
+    // Merge an ANCS name-only event with a later phone-number update for the
+    // same caller rather than consuming two slots in the recent list.
+    const bool sameNumber = hasNumber && recentCount_ && recents_[0].number[0] &&
+                            strcmp(recents_[0].number, number) == 0;
+    const bool enrichNameOnly = hasName && recentCount_ && !recents_[0].number[0] &&
+                                strcmp(recents_[0].name, name) == 0;
+    if (sameNumber || enrichNameOnly) {
+        if (hasName) {
+            strncpy(recents_[0].name, name, sizeof(recents_[0].name) - 1);
+            recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
+        }
+        if (hasNumber) {
+            strncpy(recents_[0].number, number, sizeof(recents_[0].number) - 1);
+            recents_[0].number[sizeof(recents_[0].number) - 1] = '\0';
+        }
+        recents_[0].timestampEpoch = millis() / 1000;
     } else {
-        strncpy(recents_[0].name, number, sizeof(recents_[0].name) - 1);
+        size_t copyLimit = (recentCount_ < MAX_RECENTS) ? recentCount_ : (MAX_RECENTS - 1);
+        for (size_t i = copyLimit; i > 0; --i) recents_[i] = recents_[i - 1];
+
+        const char* displayName = hasName ? name : number;
+        strncpy(recents_[0].name, displayName, sizeof(recents_[0].name) - 1);
+        recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
+
+        if (hasNumber) strncpy(recents_[0].number, number, sizeof(recents_[0].number) - 1);
+        else recents_[0].number[0] = '\0';
+        recents_[0].number[sizeof(recents_[0].number) - 1] = '\0';
+        recents_[0].timestampEpoch = millis() / 1000;
+
+        if (recentCount_ < MAX_RECENTS) recentCount_++;
     }
-    recents_[0].name[sizeof(recents_[0].name) - 1] = '\0';
 
-    strncpy(recents_[0].number, number, sizeof(recents_[0].number) - 1);
-    recents_[0].number[sizeof(recents_[0].number) - 1] = '\0';
-    recents_[0].timestampEpoch = millis() / 1000;
-
-    if (recentCount_ < MAX_RECENTS) {
-        recentCount_++;
+    auto& storage = StorageService::instance();
+    storage.setInt("recent_count", static_cast<int32_t>(recentCount_));
+    for (size_t i = 0; i < recentCount_; ++i) {
+        char key[16];
+        snprintf(key, sizeof(key), "recent_name_%u", unsigned(i));
+        storage.setString(key, recents_[i].name);
+        snprintf(key, sizeof(key), "recent_num_%u", unsigned(i));
+        storage.setString(key, recents_[i].number);
+        snprintf(key, sizeof(key), "recent_time_%u", unsigned(i));
+        storage.setInt(key, static_cast<int32_t>(recents_[i].timestampEpoch));
     }
 }
 
@@ -201,7 +253,8 @@ void BluetoothManager::simulateMedia(const char* title, const char* artist, bool
 
 void BluetoothManager::receive(const events::Event& event) {
 #if defined(ARDUINO)
-    if (incomingQueue_) xQueueSend(static_cast<QueueHandle_t>(incomingQueue_), &event, 0);
+    if (incomingQueue_ && xQueueSend(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE && wakeCallback_)
+        wakeCallback_(wakeUserData_);
 #else
     apply(event);
 #endif
@@ -220,16 +273,24 @@ void BluetoothManager::apply(const events::Event& event) {
     switch (event.type) {
         case EventType::CallIncoming:
             callState_ = CallState::Incoming;
-            strncpy(currentCaller_, event.call.caller, sizeof(currentCaller_));
-            strncpy(currentNumber_, event.call.number, sizeof(currentNumber_));
-            if (currentNumber_[0] && (recentCount_ == 0 || strcmp(recents_[0].number, currentNumber_) != 0))
+            strncpy(currentCaller_, event.call.caller, sizeof(currentCaller_) - 1);
+            currentCaller_[sizeof(currentCaller_) - 1] = '\0';
+            strncpy(currentNumber_, event.call.number, sizeof(currentNumber_) - 1);
+            currentNumber_[sizeof(currentNumber_) - 1] = '\0';
+            if ((currentCaller_[0] || currentNumber_[0]) &&
+                (recentCount_ == 0 ||
+                 (currentNumber_[0] ? strcmp(recents_[0].number, currentNumber_) != 0
+                                    : strcmp(recents_[0].name, currentCaller_) != 0)))
                 addRecentCall(currentCaller_, currentNumber_);
             break;
         case EventType::CallAccepted:
             callState_ = CallState::Active; callStartMs_ = millis(); break;
         case EventType::CallEnded:
         case EventType::CallRejected:
-            callState_ = CallState::Ended; break;
+            callState_ = CallState::Idle;
+            callStartMs_ = 0;
+            currentCaller_[0] = currentNumber_[0] = '\0';
+            break;
         case EventType::MediaTrackChanged:
             mediaPlaying_ = event.media.playing;
             strncpy(mediaTitle_, event.media.title, sizeof(mediaTitle_));

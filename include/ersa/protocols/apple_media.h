@@ -17,11 +17,16 @@ struct AmsMedia {
         if (entity == 2 && (attribute == 0 || attribute == 2)) {
             char* target = attribute == 0 ? artist : title;
             const size_t count = size < 31 ? size : 31;
-            memcpy(target, text, count); target[count] = 0;
+            char next[32]{};
+            memcpy(next, text, count);
+            if (strcmp(target, next) == 0) return false;
+            memcpy(target, next, sizeof(next));
             return true;
         }
         if (entity == 0 && attribute == 1 && size >= 2 && text[1] == ',' && text[0] >= '0' && text[0] <= '3') {
-            playing = text[0] != '0';
+            const bool nextPlaying = text[0] != '0';
+            if (playing == nextPlaying) return false;
+            playing = nextPlaying;
             return true;
         }
         return false;

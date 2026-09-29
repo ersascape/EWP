@@ -8,6 +8,10 @@
 
 namespace AppCall {
 
+namespace {
+size_t selectedRecent = 0;
+}
+
 void begin() {}
 
 bool isCallActiveOrIncoming() {
@@ -22,17 +26,13 @@ bool onButton(Buttons::Event event) {
 
     if (state == ersa::services::CallState::Incoming) {
         if (event == Buttons::Event::Next) {
-            // B1 = ACCEPT Call
-            DebugLog::log("CALL: B1 pressed -> Accept call");
-            bleMgr.acceptCall();
+            // Keep call handling on the phone; B1 returns to the menu.
+            ersa::app::ApplicationManager::instance().switchTo("app_drawer");
             return true;
         } else if (event == Buttons::Event::Action || event == Buttons::Event::ActionLong) {
             // B2 = DECLINE / HANG UP Call
             DebugLog::log("CALL: B2 pressed -> Decline call");
             bleMgr.rejectCall();
-            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
-            return true;
-        } else if (event == Buttons::Event::Home) {
             ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
         }
@@ -43,27 +43,29 @@ bool onButton(Buttons::Event event) {
             bleMgr.hangupCall();
             ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
             return true;
-        } else if (event == Buttons::Event::Home) {
-            // Long B1: Minimize to watchface while keeping call active
-            ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
-            return true;
-        }
-    } else if (state == ersa::services::CallState::Idle) {
-        if (event == Buttons::Event::Next) {
-            // B1 = Quick dial top recent call
-            if (bleMgr.canDial() && bleMgr.getRecentCallCount() > 0) {
-                DebugLog::log("CALL: B1 pressed -> Quick dial recent %s", bleMgr.getRecentCall(0).name);
-                bleMgr.dialRecent(0);
-                return true;
-            }
-        } else if (event == Buttons::Event::Action || event == Buttons::Event::Home || event == Buttons::Event::ActionLong) {
+        } else if (event == Buttons::Event::Next || event == Buttons::Event::Home) {
+            // B1 always returns to the menu while leaving the call active.
             ersa::app::ApplicationManager::instance().switchTo("app_drawer");
             return true;
         }
     } else {
-        // Any button on ended call returns to watchface
-        ersa::app::ApplicationManager::instance().switchTo("watchface_clock");
-        return true;
+        if (event == Buttons::Event::Next) {
+            const size_t count = bleMgr.getRecentCallCount();
+            if (count) selectedRecent = (selectedRecent + 1) % count;
+            return true;
+        } else if (event == Buttons::Event::Action) {
+            if (bleMgr.canDial() && bleMgr.getRecentCallCount() > 0 &&
+                bleMgr.getRecentCall(selectedRecent).number[0]) {
+                const auto& recent = bleMgr.getRecentCall(selectedRecent);
+                DebugLog::log("CALL: B2 -> dial recent %s", recent.name);
+                bleMgr.dialRecent(selectedRecent);
+                return true;
+            }
+            return true;
+        } else if (event == Buttons::Event::Home) {
+            ersa::app::ApplicationManager::instance().switchTo("app_drawer");
+            return true;
+        }
     }
 
     return false;
@@ -81,8 +83,8 @@ void render(Adafruit_GFX& display) {
     display.print("calls");
     display.setFont(&MiSansLatin_Regular8pt7b);
 
-    if (state == CallState::Idle) {
-        WatchText::line(display, ble.isConnected() ? "recent calls" : "connect from status", 18, 47, 166);
+    if (state != CallState::Incoming && state != CallState::Active) {
+        WatchText::line(display, ble.isConnected() ? "recent contacts" : "connect from status", 18, 47, 166);
         const size_t count = ble.getRecentCallCount();
         if (!count) {
             display.setFont(&MiSansLatin_Regular10pt7b);
@@ -90,17 +92,23 @@ void render(Adafruit_GFX& display) {
             display.setFont(&MiSansLatin_Regular8pt7b);
             WatchText::line(display, "incoming calls appear here", 18, 111, 166);
         }
-        for (size_t i = 0; i < count && i < 2; ++i) {
-            const auto& call = ble.getRecentCall(i);
-            const int16_t y = 60 + i * 48;
-            display.setFont(&MiSansLatin_Bold8pt7b);
-            WatchText::line(display, call.name, 18, y + 17, 164);
+        if (count) {
+            selectedRecent %= count;
+            const auto& call = ble.getRecentCall(selectedRecent);
+            display.setFont(&MiSansLatin_Bold10pt7b);
+            WatchText::line(display, call.name[0] ? call.name : "unknown", 18, 89, 164);
             display.setFont(&MiSansLatin_Regular8pt7b);
-            WatchText::line(display, call.number, 18, y + 35, 164);
-            display.drawFastHLine(18, y + 43, 164, 1);
+            WatchText::line(display, call.number, 18, 113, 164);
+            char position[20];
+            snprintf(position, sizeof(position), "%u / %u", unsigned(selectedRecent + 1), unsigned(count));
+            WatchText::line(display, position, 18, 145, 164);
         }
-        WatchText::line(display, ble.canDial() && count ? "b1: call most recent" : "call from your phone", 18, 168, 166);
-        WatchText::line(display, "b2: back", 18, 186, 166);
+        const bool selectedDialable = count && ble.getRecentCall(selectedRecent).number[0];
+        const char* dialHint = !count ? "no recent number" :
+                               !selectedDialable ? "number unavailable" :
+                               !ble.canDial() ? "connect phone to dial" : "b2: dial";
+        WatchText::line(display, dialHint, 18, 168, 166);
+        WatchText::line(display, "b1: scroll   hold b1: menu", 18, 186, 166);
         return;
     }
 
@@ -117,17 +125,14 @@ void render(Adafruit_GFX& display) {
         snprintf(duration, sizeof(duration), "%02u:%02u", unsigned(seconds / 60), unsigned(seconds % 60));
         WatchText::line(display, duration, 18, 153, 164);
     } else if (state == CallState::Incoming) {
-        WatchText::line(display, "hold b1: back", 18, 153, 164);
+        WatchText::line(display, "b1: menu", 18, 153, 164);
     }
     if (state == CallState::Incoming) {
-        WatchText::line(display, "b1: answer", 18, 168, 166);
+        WatchText::line(display, "b1: menu", 18, 168, 166);
         WatchText::line(display, "b2: decline", 18, 186, 166);
     } else if (state == CallState::Active) {
         WatchText::line(display, ble.canHangup() ? "b2: end call" : "manage call on phone", 18, 168, 166);
-        WatchText::line(display, "hold b1: back", 18, 186, 166);
-    } else {
-        WatchText::line(display, "check call on your phone", 18, 168, 166);
-        WatchText::line(display, "press a button to return", 18, 186, 166);
+        WatchText::line(display, "b1: menu", 18, 186, 166);
     }
 }
 

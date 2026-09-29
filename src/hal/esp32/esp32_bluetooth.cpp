@@ -318,6 +318,10 @@ void Esp32Bluetooth::beginAdvertising() {
 
     pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMaxPreferred(0x12);
+    // BLE interval units are 0.625 ms. A 500 ms interval reduces idle radio
+    // airtime while keeping the watch discoverable and ANCS solicitation intact.
+    pAdvertising->setMinInterval(800);
+    pAdvertising->setMaxInterval(800);
     BLEDevice::startAdvertising();
     DebugLog::log("BLE: advertising requested with ANCS solicitation (addr=%s)", getDeviceAddress());
 }
@@ -375,6 +379,10 @@ void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* u
     if (pImpl_) {
         pImpl_->appleClient_.setNotificationCallback(cb, userData);
     }
+}
+
+void Esp32Bluetooth::setTimeCallback(BleTimeCallback cb, void* userData) {
+    if (pImpl_) pImpl_->appleClient_.setTimeCallback(cb, userData);
 }
 
 bool Esp32Bluetooth::supportsDial() const { return pImpl_->connected_ && pImpl_->companionCalls_; }
@@ -501,6 +509,7 @@ bool Esp32Bluetooth::supportsHangup() const { return false; }
 bool Esp32Bluetooth::notificationsReady() const { return false; }
 bool Esp32Bluetooth::mediaReady() const { return false; }
 void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* user) { notifCb_ = cb; notifUserData_ = user; }
+void Esp32Bluetooth::setTimeCallback(BleTimeCallback, void*) {}
 void Esp32Bluetooth::acceptCall() {}
 void Esp32Bluetooth::rejectCall() {}
 void Esp32Bluetooth::hangupCall() {}

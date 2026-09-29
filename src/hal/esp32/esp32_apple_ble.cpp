@@ -13,6 +13,7 @@
 #include <atomic>
 #include "ersa/protocols/apple_notifications.h"
 #include "ersa/protocols/apple_media.h"
+#include "ersa/protocols/ble_current_time.h"
 #include "core/debug_log.h"
 
 #define ANCS_SERVICE_UUID           "7905f431-b5ce-4e99-a40f-4b1e122d00d0"
@@ -21,12 +22,28 @@
 #define ANCS_CHAR_DATA_SOURCE       "22eac6e9-24d6-4bb5-be44-b36ace7c7bfb"
 
 #define AMS_SERVICE_UUID            "89d3502b-0f36-433a-8ef4-c502ad55f8dc"
+#define CTS_SERVICE_UUID            "00001805-0000-1000-8000-00805f9b34fb"
+#define CTS_CHAR_CURRENT_TIME       "00002a2b-0000-1000-8000-00805f9b34fb"
 #define AMS_CHAR_REMOTE_CMD         "9b3c81d8-57b1-4a8a-b8df-0e56f7ca51c2"
 #define AMS_CHAR_ENTITY_UPDATE      "2f7cabce-808d-411f-9a0c-bb92ba96c102"
 #define AMS_CHAR_ENTITY_ATTR        "c6b2f38c-23ab-46d8-a6ab-a3a870bbd5d7"
+#define CTS_SERVICE_UUID            "00001805-0000-1000-8000-00805f9b34fb"
+#define CTS_CHAR_CURRENT_TIME       "00002a2b-0000-1000-8000-00805f9b34fb"
 
 namespace ersa {
 namespace hal {
+
+namespace {
+bool isPhoneNumberText(const char* text) {
+    if (!text || !text[0]) return false;
+    unsigned digits = 0;
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p; ++p) {
+        if (*p >= '0' && *p <= '9') ++digits;
+        else if (*p != '+' && *p != '(' && *p != ')' && *p != '-' && *p != ' ' && *p != '.') return false;
+    }
+    return digits >= 5;
+}
+}
 
 class Esp32AppleClient::Impl {
 public:
@@ -36,8 +53,10 @@ public:
     void* mediaUserData_{nullptr};
     BleNotificationCallback notifCb_{nullptr};
     void* notifUserData_{nullptr};
+    BleTimeCallback timeCb_{nullptr};
+    void* timeUserData_{nullptr};
 
-    enum Kind : uint8_t { Notification, Attributes, Media, CallAction, NotificationAction, MediaAction, MediaCommands, ServicesChanged };
+    enum Kind : uint8_t { Notification, Attributes, Media, CallAction, NotificationAction, MediaAction, MediaCommands, ServicesChanged, CurrentTime };
     struct Packet {
         Kind kind;
         uint32_t session;
@@ -91,6 +110,7 @@ public:
     BLERemoteCharacteristic* entityAttribute_{nullptr};
     bool servicesChanged_{false};
     BLERemoteCharacteristic* changed_{nullptr};
+    BLERemoteCharacteristic* currentTime_{nullptr};
 
     bool live() const { return !shutdown_ && session_ == generation_.load(); }
 
@@ -170,7 +190,7 @@ public:
             const bool fresh = !call_.ringing || call_.uid != uid;
             call_.update(uid, data[1]);
             publishedCallUid_ = uid;
-            if (fresh && callCb_) callCb_(BleCallAction::Incoming, "incoming call", "", callUserData_);
+            if (fresh && callCb_) callCb_(BleCallAction::Incoming, "", "", callUserData_);
         }
         // Coalesce queued modifications without mixing attributes across UIDs.
         for (size_t i = 0; i < pendingCount_; ++i) {
@@ -224,10 +244,13 @@ public:
         waiting_ = false;
         if (active_.removed || !live()) return;
         if (active_.call) {
-            if (call_.ringing && call_.uid == active_.uid && callCb_)
-                callCb_(BleCallAction::Incoming,
-                        attributes_.title[0] ? attributes_.title : "incoming call",
-                        "", callUserData_); // ANCS Message is not a telephone-number field.
+            if (call_.ringing && call_.uid == active_.uid && callCb_) {
+                const bool messageIsNumber = isPhoneNumberText(attributes_.message);
+                const char* caller = attributes_.title[0] ? attributes_.title :
+                                     (messageIsNumber ? "" : attributes_.message);
+                const char* number = messageIsNumber ? attributes_.message : "";
+                callCb_(BleCallAction::Incoming, caller, number, callUserData_);
+            }
         } else if (notifCb_) {
             const bool canDismiss = (active_.flags & 16) && attributes_.negativeActionIsDismissal();
             DismissTarget* slot = nullptr;
@@ -268,6 +291,14 @@ public:
                 break;
             }
             case ServicesChanged: servicesChanged_ = true; break;
+            case CurrentTime: {
+                uint32_t epoch = 0;
+                if (protocols::decodeCurrentTime(p.data, p.size, epoch) && timeCb_)
+                    timeCb_(epoch, timeUserData_);
+                else
+                    DebugLog::log("BLE-CTS: ignored invalid Current Time value (%u bytes)", unsigned(p.size));
+                break;
+            }
             case MediaCommands:
                 supportedCommands_ = 0;
                 for (size_t i = 0; i < p.size; ++i)
@@ -319,7 +350,29 @@ public:
         DebugLog::log("BLE-Apple: service search complete");
         auto* ancs = client_->getService(BLEUUID(ANCS_SERVICE_UUID));
         auto* ams = client_->getService(BLEUUID(AMS_SERVICE_UUID));
-        DebugLog::log("BLE-Apple: services present ANCS=%d AMS=%d", ancs != nullptr, ams != nullptr);
+        auto* cts = client_->getService(BLEUUID(CTS_SERVICE_UUID));
+        DebugLog::log("BLE: optional services ANCS=%d AMS=%d CTS=%d", ancs != nullptr, ams != nullptr, cts != nullptr);
+        if (cts && live()) {
+            currentTime_ = cts->getCharacteristic(BLEUUID(CTS_CHAR_CURRENT_TIME));
+            if (currentTime_ && currentTime_->canRead()) {
+                const std::string value = currentTime_->readValue();
+                uint32_t epoch = 0;
+                if (protocols::decodeCurrentTime(reinterpret_cast<const uint8_t*>(value.data()), value.size(), epoch) && timeCb_) {
+                    timeCb_(epoch, timeUserData_);
+                    DebugLog::log("BLE-CTS: initial time read submitted");
+                } else {
+                    DebugLog::log("BLE-CTS: initial read unavailable or invalid (%u bytes)", unsigned(value.size()));
+                }
+            }
+            if (currentTime_ && currentTime_->canNotify() && live()) {
+                subscribe(currentTime_, CurrentTime);
+                DebugLog::log("BLE-CTS: time-change notifications enabled");
+            } else if (currentTime_) {
+                DebugLog::log("BLE-CTS: characteristic has no notify property");
+            }
+        } else {
+            DebugLog::log("BLE-CTS: service unavailable; network/manual time sources remain available");
+        }
         if (ancs) {
             DebugLog::log("BLE-Apple: resolving ANCS characteristics");
             auto* source = source_ = ancs->getCharacteristic(BLEUUID(ANCS_CHAR_NOTIF_SOURCE));
@@ -357,7 +410,7 @@ public:
             changed_ = gatt ? gatt->getCharacteristic(BLEUUID(uint16_t(0x2a05))) : nullptr;
             if (changed_) subscribe(changed_, ServicesChanged, false);
         }
-        return control_ || remote_;
+        return control_ || remote_ || currentTime_;
     }
 
     void restartAncs() {
@@ -382,7 +435,7 @@ public:
 
     void resetSession() {
         ancsReady_ = false; amsReady_ = false;
-        control_ = remote_ = source_ = data_ = update_ = entityAttribute_ = changed_ = nullptr;
+        control_ = remote_ = source_ = data_ = update_ = entityAttribute_ = changed_ = currentTime_ = nullptr;
         waiting_ = false; pendingCount_ = 0; overflow_ = false;
         for (auto& target : dismissTargets_) target = {};
         attributesBlocked_ = false; recoveryAttempts_ = 0;
@@ -516,6 +569,7 @@ Esp32AppleClient::~Esp32AppleClient() {
 void Esp32AppleClient::setCallCallback(BleCallCallback cb, void* user) { pImpl_->callCb_ = cb; pImpl_->callUserData_ = user; }
 void Esp32AppleClient::setMediaCallback(BleMediaCallback cb, void* user) { pImpl_->mediaCb_ = cb; pImpl_->mediaUserData_ = user; }
 void Esp32AppleClient::setNotificationCallback(BleNotificationCallback cb, void* user) { pImpl_->notifCb_ = cb; pImpl_->notifUserData_ = user; }
+void Esp32AppleClient::setTimeCallback(BleTimeCallback cb, void* user) { pImpl_->timeCb_ = cb; pImpl_->timeUserData_ = user; }
 void Esp32AppleClient::startDiscovery(const esp_bd_addr_t bda, esp_ble_addr_type_t type) { pImpl_->changePeer(bda, type); }
 void Esp32AppleClient::authenticationComplete(bool success) {
     // A latched generation survives authentication completing before the worker
