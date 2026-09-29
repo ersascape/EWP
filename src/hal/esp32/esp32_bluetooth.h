@@ -1,11 +1,15 @@
 #pragma once
 
 #include "ersa/hal/bluetooth.h"
+#include "ersa/hal/companion_source.h"
 
 namespace ersa {
 namespace hal {
 
-class Esp32Bluetooth : public IBluetooth {
+// The T1E composition currently provides an ESP32 BLE transport and an Apple
+// companion source in one driver object. Core services inject the two contracts
+// separately so another source can replace Apple without changing the HAL API.
+class Esp32Bluetooth : public IBluetooth, public ICompanionSource {
 public:
     Esp32Bluetooth();
     ~Esp32Bluetooth() override;
@@ -20,22 +24,20 @@ public:
     const char* getDeviceName() const override;
     const char* getDeviceAddress() const override;
 
-    void setCallCallback(BleCallCallback cb, void* userData) override;
-    void setMediaCallback(BleMediaCallback cb, void* userData) override;
+    const char* sourceId() const override;
+    bool isAvailable() const override;
+    CompanionCapabilities capabilities() const override;
+    void setCallCallback(CompanionCallCallback cb, void* userData) override;
+    void setMediaCallback(CompanionMediaCallback cb, void* userData) override;
     void setConnectionCallback(BleConnectionCallback cb, void* userData) override;
-    void setNotificationCallback(BleNotificationCallback cb, void* userData) override;
-    void setTimeCallback(BleTimeCallback cb, void* userData) override;
-
-    bool supportsDial() const override;
-    bool supportsHangup() const override;
-    bool notificationsReady() const override;
-    bool mediaReady() const override;
-    void acceptCall() override;
-    void rejectCall() override;
-    void hangupCall() override;
-    void dial(const char* number) override;
-
-    void mediaCommand(BleMediaAction action) override;
+    void setNotificationCallback(CompanionNotificationCallback cb, void* userData) override;
+    void setTimeCallback(CompanionTimeCallback cb, void* userData) override;
+    void setAvailabilityCallback(CompanionAvailabilityCallback cb, void* userData) override;
+    bool acceptCall() override;
+    bool rejectCall() override;
+    bool hangupCall() override;
+    bool dial(const char* number) override;
+    bool mediaCommand(CompanionMediaAction action) override;
     bool dismissNotification(uint32_t uid) override;
 
 private:
@@ -43,17 +45,20 @@ private:
     class Impl;
     Impl* pImpl_{nullptr};
 
-    BleCallCallback callCb_{nullptr};
+    CompanionCallCallback callCb_{nullptr};
     void* callUserData_{nullptr};
 
-    BleMediaCallback mediaCb_{nullptr};
+    CompanionMediaCallback mediaCb_{nullptr};
     void* mediaUserData_{nullptr};
 
     BleConnectionCallback connCb_{nullptr};
     void* connUserData_{nullptr};
 
-    BleNotificationCallback notifCb_{nullptr};
+    CompanionNotificationCallback notifCb_{nullptr};
     void* notifUserData_{nullptr};
+    CompanionAvailabilityCallback availabilityCb_{nullptr};
+    void* availabilityUserData_{nullptr};
+    bool lastSourceAvailability_{false};
 };
 
 } // namespace hal

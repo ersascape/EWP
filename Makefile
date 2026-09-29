@@ -20,6 +20,7 @@ TEST_SRCS = \
 	src/ersa/board.cpp
 
 TEST_BIN = tests/run_tests
+HEADERS = $(shell find include -type f -name '*.h')
 
 all: firmware test
 
@@ -29,7 +30,7 @@ firmware:
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-$(TEST_BIN): $(TEST_SRCS) $(wildcard include/ersa/protocols/*.h)
+$(TEST_BIN): $(TEST_SRCS) $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRCS)
 
 clean:

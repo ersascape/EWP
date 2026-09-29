@@ -47,13 +47,13 @@ bool isPhoneNumberText(const char* text) {
 
 class Esp32AppleClient::Impl {
 public:
-    BleCallCallback callCb_{nullptr};
+    CompanionCallCallback callCb_{nullptr};
     void* callUserData_{nullptr};
-    BleMediaCallback mediaCb_{nullptr};
+    CompanionMediaCallback mediaCb_{nullptr};
     void* mediaUserData_{nullptr};
-    BleNotificationCallback notifCb_{nullptr};
+    CompanionNotificationCallback notifCb_{nullptr};
     void* notifUserData_{nullptr};
-    BleTimeCallback timeCb_{nullptr};
+    CompanionTimeCallback timeCb_{nullptr};
     void* timeUserData_{nullptr};
 
     enum Kind : uint8_t { Notification, Attributes, Media, CallAction, NotificationAction, MediaAction, MediaCommands, ServicesChanged, CurrentTime };
@@ -80,7 +80,7 @@ public:
     std::atomic<uint32_t> authenticatedGeneration_{UINT32_MAX};
     bool wanted_{false}; // protected by controlMux_
     std::atomic<bool> shutdown_{false}, exited_{false};
-    std::atomic<bool> ancsReady_{false}, amsReady_{false}, overflow_{false};
+    std::atomic<bool> ancsReady_{false}, amsReady_{false}, ctsReady_{false}, overflow_{false};
     std::atomic<uint32_t> publishedCallUid_{0};
     uint32_t session_{0};
 
@@ -169,6 +169,7 @@ public:
         if (size > sizeof(p.data)) {
             if (kind == Attributes) overflow_ = true;
             else ++droppedOther_;
+            notifyWorker();
             return;
         }
         if (size) memcpy(p.data, bytes, size);
@@ -216,7 +217,7 @@ public:
                 if (pending_[i].uid == uid) pending_[i].removed = true;
             if (notifCb_) notifCb_(nullptr, nullptr, "", uid, false, notifUserData_);
             if (call_.remove(uid) && callCb_)
-                callCb_(BleCallAction::Ended, "", "", callUserData_);
+                callCb_(CompanionCallAction::Ended, "", "", callUserData_);
             return;
         }
         const bool incoming = data[2] == 1;
@@ -228,7 +229,7 @@ public:
             const bool fresh = !call_.ringing || call_.uid != uid;
             call_.update(uid, data[1]);
             publishedCallUid_ = uid;
-            if (fresh && callCb_) callCb_(BleCallAction::Incoming, "", "", callUserData_);
+            if (fresh && callCb_) callCb_(CompanionCallAction::Incoming, "", "", callUserData_);
         }
         // Coalesce queued modifications without mixing attributes across UIDs.
         for (size_t i = 0; i < pendingCount_; ++i) {
@@ -298,7 +299,7 @@ public:
                 const char* caller = attributes_.title[0] ? attributes_.title :
                                      (messageIsNumber ? "" : attributes_.message);
                 const char* number = messageIsNumber ? attributes_.message : "";
-                callCb_(BleCallAction::Incoming, caller, number, callUserData_);
+                callCb_(CompanionCallAction::Incoming, caller, number, callUserData_);
             }
         } else if (notifCb_) {
             const bool canDismiss = (active_.flags & 16) && attributes_.negativeActionIsDismissal();
@@ -394,15 +395,24 @@ public:
         // getServices() deletes the previous service objects. Never call it
         // after subscriptions have been installed or retain pointers across it.
         DebugLog::log("BLE-Apple: discovering services");
-        client_->getServices();
+        auto* services = client_->getServices();
         if (!live() || !client_->isConnected()) return false;
+        if (!services) {
+            DebugLog::log("BLE-Apple: service discovery returned no result; retrying");
+            return false;
+        }
         DebugLog::log("BLE-Apple: service search complete");
         auto* ancs = client_->getService(BLEUUID(ANCS_SERVICE_UUID));
         auto* ams = client_->getService(BLEUUID(AMS_SERVICE_UUID));
         auto* cts = client_->getService(BLEUUID(CTS_SERVICE_UUID));
+        ctsReady_ = false;
         DebugLog::log("BLE: optional services ANCS=%d AMS=%d CTS=%d", ancs != nullptr, ams != nullptr, cts != nullptr);
+        if (!ancs && !ams && !cts) {
+            DebugLog::log("BLE-Apple: peer has no Apple services; keeping link, capabilities unavailable");
+        }
         if (cts && live()) {
             currentTime_ = cts->getCharacteristic(BLEUUID(CTS_CHAR_CURRENT_TIME));
+            ctsReady_ = currentTime_ != nullptr;
             if (currentTime_ && currentTime_->canRead()) {
                 const std::string value = currentTime_->readValue();
                 uint32_t epoch = 0;
@@ -459,7 +469,10 @@ public:
             changed_ = gatt ? gatt->getCharacteristic(BLEUUID(uint16_t(0x2a05))) : nullptr;
             if (changed_) subscribe(changed_, ServicesChanged, false);
         }
-        return control_ || remote_ || currentTime_;
+        // A completed discovery with no Apple services is still a valid peer:
+        // future providers (Android/Linux companions) can use other services,
+        // and the BLE link must not be held in an endless rediscovery loop.
+        return true;
     }
 
     void restartAncs() {
@@ -470,7 +483,7 @@ public:
         data_->registerForNotify(nullptr);
         waiting_ = false;
         xQueueReset(sourceQueue_); xQueueReset(callQueue_);
-        if (call_.ringing && callCb_) callCb_(BleCallAction::Ended, "", "", callUserData_);
+        if (call_.ringing && callCb_) callCb_(CompanionCallAction::Ended, "", "", callUserData_);
         call_ = {};
         for (auto& target : dismissTargets_) target = {};
         if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, false, notifUserData_);
@@ -483,7 +496,7 @@ public:
     }
 
     void resetSession() {
-        ancsReady_ = false; amsReady_ = false;
+        ancsReady_ = false; amsReady_ = false; ctsReady_ = false;
         control_ = remote_ = source_ = data_ = update_ = entityAttribute_ = changed_ = currentTime_ = nullptr;
         waiting_ = false; pendingCount_ = 0; overflow_ = false;
         for (auto& target : dismissTargets_) target = {};
@@ -499,8 +512,10 @@ public:
 
     void pause(uint32_t ms) {
         const uint32_t start = millis();
-        while (live() && uint32_t(millis() - start) < ms) {
-            const uint32_t remaining = ms - uint32_t(millis() - start);
+        while (live()) {
+            const uint32_t elapsed = uint32_t(millis() - start);
+            if (elapsed >= ms) break;
+            const uint32_t remaining = ms - elapsed;
             TickType_t ticks = pdMS_TO_TICKS(remaining);
             if (remaining && !ticks) ticks = 1;
             ulTaskNotifyTake(pdTRUE, ticks);
@@ -597,7 +612,7 @@ public:
                     if (ancsReady_) { source_->registerForNotify(nullptr); data_->registerForNotify(nullptr); }
                     if (amsReady_) { update_->registerForNotify(nullptr); remote_->registerForNotify(nullptr); }
                     if (changed_) changed_->registerForNotify(nullptr, false);
-                    if (call_.ringing && callCb_) callCb_(BleCallAction::Ended, "", "", callUserData_);
+                    if (call_.ringing && callCb_) callCb_(CompanionCallAction::Ended, "", "", callUserData_);
                     if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, false, notifUserData_);
                     resetSession();
                     ready = discover();
@@ -644,10 +659,10 @@ Esp32AppleClient::~Esp32AppleClient() {
     if (pImpl_->callQueue_) vQueueDelete(pImpl_->callQueue_);
     delete pImpl_;
 }
-void Esp32AppleClient::setCallCallback(BleCallCallback cb, void* user) { pImpl_->callCb_ = cb; pImpl_->callUserData_ = user; }
-void Esp32AppleClient::setMediaCallback(BleMediaCallback cb, void* user) { pImpl_->mediaCb_ = cb; pImpl_->mediaUserData_ = user; }
-void Esp32AppleClient::setNotificationCallback(BleNotificationCallback cb, void* user) { pImpl_->notifCb_ = cb; pImpl_->notifUserData_ = user; }
-void Esp32AppleClient::setTimeCallback(BleTimeCallback cb, void* user) { pImpl_->timeCb_ = cb; pImpl_->timeUserData_ = user; }
+void Esp32AppleClient::setCallCallback(CompanionCallCallback cb, void* user) { pImpl_->callCb_ = cb; pImpl_->callUserData_ = user; }
+void Esp32AppleClient::setMediaCallback(CompanionMediaCallback cb, void* user) { pImpl_->mediaCb_ = cb; pImpl_->mediaUserData_ = user; }
+void Esp32AppleClient::setNotificationCallback(CompanionNotificationCallback cb, void* user) { pImpl_->notifCb_ = cb; pImpl_->notifUserData_ = user; }
+void Esp32AppleClient::setTimeCallback(CompanionTimeCallback cb, void* user) { pImpl_->timeCb_ = cb; pImpl_->timeUserData_ = user; }
 void Esp32AppleClient::startDiscovery(const esp_bd_addr_t bda, esp_ble_addr_type_t type) { pImpl_->changePeer(bda, type); }
 void Esp32AppleClient::authenticationComplete(bool success) {
     // A latched generation survives authentication completing before the worker
@@ -658,6 +673,7 @@ void Esp32AppleClient::authenticationComplete(bool success) {
 void Esp32AppleClient::stop() { pImpl_->changePeer(nullptr, BLE_ADDR_TYPE_RANDOM); }
 bool Esp32AppleClient::isAncsActive() const { return pImpl_->ancsReady_; }
 bool Esp32AppleClient::isAmsActive() const { return pImpl_->amsReady_; }
+bool Esp32AppleClient::isCtsActive() const { return pImpl_->ctsReady_; }
 bool Esp32AppleClient::dismissNotification(uint32_t uid) {
     return pImpl_->requestNotificationDismiss(uid);
 }
@@ -669,16 +685,16 @@ void Esp32AppleClient::rejectCall() {
     const uint8_t action = 1;
     pImpl_->enqueue(Impl::CallAction, pImpl_->generation_, &action, 1, pImpl_->publishedCallUid_);
 }
-void Esp32AppleClient::mediaCommand(BleMediaAction action) {
+void Esp32AppleClient::mediaCommand(CompanionMediaAction action) {
     uint8_t command;
     switch (action) {
-        case BleMediaAction::Play: command = 0; break;
-        case BleMediaAction::Pause: command = 1; break;
-        case BleMediaAction::Toggle: command = 2; break;
-        case BleMediaAction::Next: command = 3; break;
-        case BleMediaAction::Previous: command = 4; break;
-        case BleMediaAction::VolumeUp: command = 5; break;
-        case BleMediaAction::VolumeDown: command = 6; break;
+        case CompanionMediaAction::Play: command = 0; break;
+        case CompanionMediaAction::Pause: command = 1; break;
+        case CompanionMediaAction::Toggle: command = 2; break;
+        case CompanionMediaAction::Next: command = 3; break;
+        case CompanionMediaAction::Previous: command = 4; break;
+        case CompanionMediaAction::VolumeUp: command = 5; break;
+        case CompanionMediaAction::VolumeDown: command = 6; break;
         default: return;
     }
     pImpl_->enqueue(Impl::MediaAction, pImpl_->generation_, &command, 1);

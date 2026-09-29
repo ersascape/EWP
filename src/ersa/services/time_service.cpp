@@ -39,7 +39,8 @@ bool TimeService::submitTime(events::TimeSource source, uint32_t epochSeconds) {
     const auto priority = [](events::TimeSource candidate) -> uint8_t {
         switch (candidate) {
             case events::TimeSource::Manual: return 3;
-            case events::TimeSource::BleCurrentTime: return 2;
+            case events::TimeSource::BleCurrentTime:
+            case events::TimeSource::Companion: return 2;
             case events::TimeSource::Network: return 1;
             default: return 0;
         }

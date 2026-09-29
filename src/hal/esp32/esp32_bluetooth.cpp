@@ -16,6 +16,12 @@
 #define CHAR_MEDIA_UUID     "0000FFE2-0000-1000-8000-00805F9B34FB"
 #define CHAR_RECENTS_UUID   "0000FFE3-0000-1000-8000-00805F9B34FB"
 
+namespace {
+constexpr uint16_t FAST_ADV_INTERVAL = 32; // 20 ms, BLE units of 0.625 ms
+constexpr uint16_t SLOW_ADV_INTERVAL = 874; // 546.25 ms, Apple QA1931 value
+constexpr uint32_t FAST_ADV_DURATION_MS = 30000;
+}
+
 namespace ersa {
 namespace hal {
 
@@ -46,9 +52,11 @@ public:
     Esp32AppleClient appleClient_;
     std::atomic<bool> connected_{false};
     std::atomic<bool> advertising_{false}, advertisingPending_{false};
+    std::atomic<bool> slowAdvertising_{false}, slowRestartPending_{false};
     std::atomic<bool> companionCalls_{false}, companionMedia_{false};
     bool initialized_{false};
     std::atomic<uint32_t> advertiseAfterMs_{0};
+    std::atomic<uint32_t> advertisingStartedAtMs_{0};
     static Impl*& current() { static Impl* instance = nullptr; return instance; }
     static void gapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
         auto* self = current();
@@ -57,10 +65,15 @@ public:
             const bool success = param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS;
             self->advertising_ = success;
             self->advertisingPending_ = !success && !self->connected_;
+            if (success) self->advertisingStartedAtMs_ = millis();
             DebugLog::log("BLE: advertising start %s status=0x%x", success ? "ok" : "failed",
                           unsigned(param->adv_start_cmpl.status));
         } else if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT) {
             self->advertising_ = false;
+            if (self->slowRestartPending_.exchange(false)) {
+                self->advertisingPending_ = true;
+                self->advertiseAfterMs_ = millis() + 250;
+            }
         }
     }
     esp_bd_addr_t peer_{};
@@ -80,6 +93,7 @@ public:
         connected_ = true;
         advertising_ = false;
         advertisingPending_ = false;
+        slowRestartPending_ = false;
         DebugLog::log("BLE: Central connected");
         if (param) {
             memcpy(peer_, param->connect.remote_bda, sizeof(peer_));
@@ -99,6 +113,8 @@ public:
         connected_ = false;
         advertising_ = false;
         advertisingPending_ = true;
+        slowAdvertising_ = false;
+        slowRestartPending_ = false;
         advertiseAfterMs_ = millis() + 750;
         companionCalls_ = false; companionMedia_ = false;
         appleClient_.stop();
@@ -118,10 +134,10 @@ public:
             companionCalls_ = true;
             // First byte = action: 0=Incoming, 1=Answered, 2=Rejected, 3=Ended
             uint8_t actionByte = static_cast<uint8_t>(rxVal[0]);
-            BleCallAction action = BleCallAction::Incoming;
-            if (actionByte == 1) action = BleCallAction::Answered;
-            else if (actionByte == 2) action = BleCallAction::Rejected;
-            else if (actionByte == 3) action = BleCallAction::Ended;
+            CompanionCallAction action = CompanionCallAction::Incoming;
+            if (actionByte == 1) action = CompanionCallAction::Answered;
+            else if (actionByte == 2) action = CompanionCallAction::Rejected;
+            else if (actionByte == 3) action = CompanionCallAction::Ended;
 
             char caller[32] = "";
             char number[20] = "";
@@ -281,14 +297,35 @@ Result<void> Esp32Bluetooth::init() {
 void Esp32Bluetooth::startAdvertising() {
     if (!pImpl_->initialized_ || pImpl_->connected_) return;
     pImpl_->advertising_ = false;
+    pImpl_->slowAdvertising_ = false;
+    pImpl_->slowRestartPending_ = false;
     pImpl_->advertisingPending_ = true;
     pImpl_->advertiseAfterMs_ = millis() + 250;
     DebugLog::log("BLE: advertising scheduled");
 }
 
 void Esp32Bluetooth::tick() {
-    if (!pImpl_->initialized_ || pImpl_->connected_ || pImpl_->advertising_ ||
-        !pImpl_->advertisingPending_ ||
+    if (!pImpl_->initialized_) return;
+    const bool sourceAvailable = isAvailable();
+    if (sourceAvailable != lastSourceAvailability_) {
+        lastSourceAvailability_ = sourceAvailable;
+        if (availabilityCb_) availabilityCb_(sourceAvailable, availabilityUserData_);
+    }
+    if (pImpl_->connected_) return;
+    if (pImpl_->advertising_) {
+        const uint32_t elapsed = uint32_t(millis() - pImpl_->advertisingStartedAtMs_.load());
+        if (!pImpl_->slowAdvertising_ && !pImpl_->slowRestartPending_ &&
+            elapsed >= FAST_ADV_DURATION_MS) {
+            pImpl_->slowAdvertising_ = true;
+            pImpl_->slowRestartPending_ = true;
+            pImpl_->advertisingPending_ = false;
+            DebugLog::log("BLE: switching to slow advertising after %lu ms",
+                          static_cast<unsigned long>(elapsed));
+            BLEDevice::stopAdvertising();
+        }
+        return;
+    }
+    if (!pImpl_->advertisingPending_ ||
         int32_t(millis() - pImpl_->advertiseAfterMs_.load()) < 0) return;
     pImpl_->advertiseAfterMs_ = millis() + 5000;
     beginAdvertising();
@@ -318,25 +355,34 @@ void Esp32Bluetooth::beginAdvertising() {
 
     pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMaxPreferred(0x12);
-    // BLE interval units are 0.625 ms. A 500 ms interval reduces idle radio
-    // airtime while keeping the watch discoverable and ANCS solicitation intact.
-    pAdvertising->setMinInterval(800);
-    pAdvertising->setMaxInterval(800);
+    // Apple recommends 20 ms for the initial 30 seconds, followed by exactly
+    // 546.25 ms. The state machine switches intervals after fast discovery.
+    const uint16_t interval = pImpl_->slowAdvertising_ ? SLOW_ADV_INTERVAL : FAST_ADV_INTERVAL;
+    pAdvertising->setMinInterval(interval);
+    pAdvertising->setMaxInterval(interval);
     BLEDevice::startAdvertising();
-    DebugLog::log("BLE: advertising requested with ANCS solicitation (addr=%s)", getDeviceAddress());
+    DebugLog::log("BLE: advertising requested with ANCS solicitation interval=%s addr=%s",
+                  pImpl_->slowAdvertising_ ? "546.25ms" : "20ms", getDeviceAddress());
 }
 
 void Esp32Bluetooth::stopAdvertising() {
     pImpl_->advertisingPending_ = false;
     pImpl_->advertising_ = false;
+    pImpl_->slowRestartPending_ = false;
     BLEDevice::stopAdvertising();
 }
 
 bool Esp32Bluetooth::isAdvertising() const { return pImpl_->advertising_; }
 
 uint32_t Esp32Bluetooth::nextWakeDelayMs(uint32_t nowMs) const {
-    if (!pImpl_->initialized_ || pImpl_->connected_ || pImpl_->advertising_ ||
-        !pImpl_->advertisingPending_) return UINT32_MAX;
+    if (!pImpl_->initialized_ || pImpl_->connected_) return UINT32_MAX;
+    if (pImpl_->slowRestartPending_) return 250;
+    if (pImpl_->advertising_) {
+        if (pImpl_->slowAdvertising_) return UINT32_MAX;
+        const uint32_t elapsed = uint32_t(nowMs - pImpl_->advertisingStartedAtMs_.load());
+        return elapsed >= FAST_ADV_DURATION_MS ? 0 : FAST_ADV_DURATION_MS - elapsed;
+    }
+    if (!pImpl_->advertisingPending_) return UINT32_MAX;
     const int32_t remaining = int32_t(pImpl_->advertiseAfterMs_.load() - nowMs);
     return remaining > 0 ? uint32_t(remaining) : 0;
 }
@@ -359,7 +405,27 @@ bool Esp32Bluetooth::isConnected() const {
     return pImpl_ && pImpl_->connected_;
 }
 
-void Esp32Bluetooth::setCallCallback(BleCallCallback cb, void* userData) {
+const char* Esp32Bluetooth::sourceId() const { return "apple-ancs-ams-cts"; }
+bool Esp32Bluetooth::isAvailable() const {
+    if (!pImpl_ || !pImpl_->connected_) return false;
+    const CompanionCapabilities caps = capabilities();
+    return caps.notifications || caps.media || caps.calls || caps.timeSync;
+}
+CompanionCapabilities Esp32Bluetooth::capabilities() const {
+    CompanionCapabilities caps{};
+    if (!pImpl_ || !pImpl_->connected_) return caps;
+    caps.notifications = pImpl_->appleClient_.isAncsActive();
+    caps.media = pImpl_->appleClient_.isAmsActive() || pImpl_->companionMedia_;
+    caps.calls = pImpl_->appleClient_.isAncsActive() || pImpl_->companionCalls_;
+    caps.answerReject = caps.calls;
+    caps.hangup = pImpl_->companionCalls_;
+    caps.dial = pImpl_->companionCalls_;
+    caps.remoteDismiss = pImpl_->appleClient_.isAncsActive();
+    caps.timeSync = pImpl_->appleClient_.isCtsActive();
+    return caps;
+}
+
+void Esp32Bluetooth::setCallCallback(CompanionCallCallback cb, void* userData) {
     callCb_ = cb;
     callUserData_ = userData;
     if (pImpl_) {
@@ -367,7 +433,7 @@ void Esp32Bluetooth::setCallCallback(BleCallCallback cb, void* userData) {
     }
 }
 
-void Esp32Bluetooth::setMediaCallback(BleMediaCallback cb, void* userData) {
+void Esp32Bluetooth::setMediaCallback(CompanionMediaCallback cb, void* userData) {
     mediaCb_ = cb;
     mediaUserData_ = userData;
     if (pImpl_) {
@@ -380,7 +446,7 @@ void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userD
     connUserData_ = userData;
 }
 
-void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* userData) {
+void Esp32Bluetooth::setNotificationCallback(CompanionNotificationCallback cb, void* userData) {
     notifCb_ = cb;
     notifUserData_ = userData;
     if (pImpl_) {
@@ -388,60 +454,66 @@ void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* u
     }
 }
 
-void Esp32Bluetooth::setTimeCallback(BleTimeCallback cb, void* userData) {
+void Esp32Bluetooth::setTimeCallback(CompanionTimeCallback cb, void* userData) {
     if (pImpl_) pImpl_->appleClient_.setTimeCallback(cb, userData);
 }
 
-bool Esp32Bluetooth::supportsDial() const { return pImpl_->connected_ && pImpl_->companionCalls_; }
-bool Esp32Bluetooth::supportsHangup() const { return supportsDial(); }
-bool Esp32Bluetooth::notificationsReady() const { return pImpl_->connected_ && pImpl_->appleClient_.isAncsActive(); }
-bool Esp32Bluetooth::mediaReady() const { return pImpl_->connected_ && (pImpl_->appleClient_.isAmsActive() || pImpl_->companionMedia_); }
+void Esp32Bluetooth::setAvailabilityCallback(CompanionAvailabilityCallback cb, void* userData) {
+    availabilityCb_ = cb;
+    availabilityUserData_ = userData;
+}
 
-void Esp32Bluetooth::acceptCall() {
+bool Esp32Bluetooth::acceptCall() {
     DebugLog::log("BLE: Command -> ACCEPT CALL");
-    if (pImpl_) {
+    if (pImpl_ && capabilities().answerReject) {
         if (pImpl_->appleClient_.isAncsActive()) {
             pImpl_->appleClient_.acceptCall();
-            return;
+            return true;
         }
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x01; // Accept
             pImpl_->pCallChar_->setValue(&val, 1);
             pImpl_->pCallChar_->notify();
+            return true;
         }
     }
+    return false;
 }
 
-void Esp32Bluetooth::rejectCall() {
+bool Esp32Bluetooth::rejectCall() {
     DebugLog::log("BLE: Command -> REJECT CALL");
-    if (pImpl_) {
+    if (pImpl_ && capabilities().answerReject) {
         if (pImpl_->appleClient_.isAncsActive()) {
             pImpl_->appleClient_.rejectCall();
-            return;
+            return true;
         }
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x02; // Reject
             pImpl_->pCallChar_->setValue(&val, 1);
             pImpl_->pCallChar_->notify();
+            return true;
         }
     }
+    return false;
 }
 
-void Esp32Bluetooth::hangupCall() {
+bool Esp32Bluetooth::hangupCall() {
     DebugLog::log("BLE: Command -> HANG UP CALL");
     if (pImpl_) {
-        if (!supportsHangup()) return;
+        if (!capabilities().hangup) return false;
         if (pImpl_->pCallChar_ && pImpl_->connected_) {
             uint8_t val = 0x02; // Hangup
             pImpl_->pCallChar_->setValue(&val, 1);
             pImpl_->pCallChar_->notify();
+            return true;
         }
     }
+    return false;
 }
 
-void Esp32Bluetooth::dial(const char* number) {
+bool Esp32Bluetooth::dial(const char* number) {
     DebugLog::log("BLE: Command -> DIAL '%s'", number ? number : "");
-    if (supportsDial() && pImpl_->pCallChar_ && pImpl_->connected_) {
+    if (number && number[0] && capabilities().dial && pImpl_->pCallChar_ && pImpl_->connected_) {
         char buf[32];
         buf[0] = 0x03; // Dial command
         if (number) {
@@ -452,22 +524,26 @@ void Esp32Bluetooth::dial(const char* number) {
         }
         pImpl_->pCallChar_->setValue(reinterpret_cast<uint8_t*>(buf), strlen(buf + 1) + 1);
         pImpl_->pCallChar_->notify();
+        return true;
     }
+    return false;
 }
 
-void Esp32Bluetooth::mediaCommand(BleMediaAction action) {
+bool Esp32Bluetooth::mediaCommand(CompanionMediaAction action) {
     DebugLog::log("BLE: Command -> MEDIA ACTION %d", int(action));
     if (pImpl_) {
-        if (pImpl_->appleClient_.isAmsActive()) {
+        if (capabilities().media && pImpl_->appleClient_.isAmsActive()) {
             pImpl_->appleClient_.mediaCommand(action);
-            return;
+            return true;
         }
         if (pImpl_->pMediaChar_ && pImpl_->connected_) {
             uint8_t val = static_cast<uint8_t>(action);
             pImpl_->pMediaChar_->setValue(&val, 1);
             pImpl_->pMediaChar_->notify();
+            return true;
         }
     }
+    return false;
 }
 
 bool Esp32Bluetooth::dismissNotification(uint32_t uid) {
@@ -497,12 +573,15 @@ void Esp32Bluetooth::beginAdvertising() {}
 const char* Esp32Bluetooth::getDeviceName() const { return "Ersa Wearable"; }
 const char* Esp32Bluetooth::getDeviceAddress() const { return "24:DC:C3:01:23:45"; }
 
-void Esp32Bluetooth::setCallCallback(BleCallCallback cb, void* userData) {
+const char* Esp32Bluetooth::sourceId() const { return "none"; }
+bool Esp32Bluetooth::isAvailable() const { return false; }
+CompanionCapabilities Esp32Bluetooth::capabilities() const { return {}; }
+void Esp32Bluetooth::setCallCallback(CompanionCallCallback cb, void* userData) {
     callCb_ = cb;
     callUserData_ = userData;
 }
 
-void Esp32Bluetooth::setMediaCallback(BleMediaCallback cb, void* userData) {
+void Esp32Bluetooth::setMediaCallback(CompanionMediaCallback cb, void* userData) {
     mediaCb_ = cb;
     mediaUserData_ = userData;
 }
@@ -512,17 +591,16 @@ void Esp32Bluetooth::setConnectionCallback(BleConnectionCallback cb, void* userD
     connUserData_ = userData;
 }
 
-bool Esp32Bluetooth::supportsDial() const { return false; }
-bool Esp32Bluetooth::supportsHangup() const { return false; }
-bool Esp32Bluetooth::notificationsReady() const { return false; }
-bool Esp32Bluetooth::mediaReady() const { return false; }
-void Esp32Bluetooth::setNotificationCallback(BleNotificationCallback cb, void* user) { notifCb_ = cb; notifUserData_ = user; }
-void Esp32Bluetooth::setTimeCallback(BleTimeCallback, void*) {}
-void Esp32Bluetooth::acceptCall() {}
-void Esp32Bluetooth::rejectCall() {}
-void Esp32Bluetooth::hangupCall() {}
-void Esp32Bluetooth::dial(const char*) {}
-void Esp32Bluetooth::mediaCommand(BleMediaAction) {}
+void Esp32Bluetooth::setNotificationCallback(CompanionNotificationCallback cb, void* user) { notifCb_ = cb; notifUserData_ = user; }
+void Esp32Bluetooth::setTimeCallback(CompanionTimeCallback, void*) {}
+void Esp32Bluetooth::setAvailabilityCallback(CompanionAvailabilityCallback cb, void* user) {
+    availabilityCb_ = cb; availabilityUserData_ = user;
+}
+bool Esp32Bluetooth::acceptCall() { return false; }
+bool Esp32Bluetooth::rejectCall() { return false; }
+bool Esp32Bluetooth::hangupCall() { return false; }
+bool Esp32Bluetooth::dial(const char*) { return false; }
+bool Esp32Bluetooth::mediaCommand(CompanionMediaAction) { return false; }
 bool Esp32Bluetooth::dismissNotification(uint32_t) { return false; }
 
 } // namespace hal

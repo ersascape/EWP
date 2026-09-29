@@ -28,6 +28,7 @@ g++ -std=c++17 -I "$preview_tmp" -I "$repo_root/tests/ui_preview" \
   "$repo_root/src/apps/app_notifications.cpp" "$repo_root/src/apps/app_call.cpp" \
   "$repo_root/src/apps/app_now_playing.cpp" \
   "$repo_root/src/ersa/services/bluetooth_manager.cpp" \
+  "$repo_root/src/ersa/services/storage_service.cpp" \
   "$repo_root/src/ersa/events/event_bus.cpp" \
   "$repo_root/src/ersa/app/application_manager.cpp" \
   -o "$preview_tmp/render"

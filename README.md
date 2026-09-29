@@ -30,37 +30,59 @@ An open-source, modular embedded operating environment and minimalist smartwatch
 
 ## Ersa Wearable Platform — Layered Architecture
 
-Ersa Wearable Platform is a modular embedded watch environment. Its core event and service interfaces are portable; ESP32 BLE transport and the current screen renderers still depend on their platform libraries:
+Ersa Wearable Platform is a layered embedded watch environment. The diagram follows the layered, framework-over-HAL style used by Android Open Source Project architecture diagrams. Solid paths are implemented today; dashed paths show intended provider extension points.
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│ Applications                                            │
-│   Watchfaces • Calendar • Agenda • Tasks • Status       │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│ Ersa Application Framework                              │
-│   Lifecycle (create/start/resume/pause/stop/destroy)    │
-│   Event Subscription • Complications • Canvas UI API    │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│ Ersa System Services                                    │
-│   TimeService • PowerManager (WakeLock RAII)            │
-│   NetworkManager (NetworkHandle RAII) • DisplayManager  │
-│   StorageService • SettingsService • LoggingService     │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│ Ersa Platform HAL (Hardware Abstraction Layer)          │
-│   IDisplay • IRtc • IBattery • IInput • INetwork        │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│ Board Support Package (BSP)                             │
-│   BoardAmpereT1e (Ampere Works T1E / XIAO ESP32-C3)    │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Applications[Applications]
+        watch[Watchface]
+        organizer[Calendar · Agenda · Tasks]
+        companionUI[Calls · Notifications · Now Playing]
+    end
+
+    subgraph Framework[Ersa Application Framework]
+        lifecycle[App lifecycle · navigation · input routing]
+        eventbus[Normalized event bus]
+        services[Time · Power · Network · Display · Storage · Settings]
+    end
+
+    subgraph Sources[Companion data sources]
+        apple[Apple protocol handlers<br/>ANCS · AMS · CTS · implemented]
+        android[Android companion source<br/>planned]
+        mpris[Linux MPRIS source<br/>planned]
+        normalize[BluetoothManager<br/>normalized events + capabilities]
+    end
+
+    subgraph HAL[Platform HAL]
+        ble[IBluetooth<br/>BLE link · advertising · commands]
+        peripherals[IDisplay · IRtc · IBattery<br/>IInput · INetwork]
+    end
+
+    subgraph BSP[Board Support Package]
+        board[Ampere Works T1E<br/>XIAO ESP32-C3 · e-paper · DS3231 · buttons]
+    end
+
+    watch --> lifecycle
+    organizer --> lifecycle
+    companionUI --> lifecycle
+    lifecycle --> services
+    services <--> eventbus
+    normalize --> eventbus
+    apple --> ble
+    ble <--> normalize
+    android -. future adapter .-> normalize
+    mpris -. future adapter .-> normalize
+    services --> peripherals
+    ble --> board
+    peripherals --> board
+
+    classDef current fill:#e8f3ff,stroke:#2673b8,color:#142536;
+    classDef planned fill:#fff6df,stroke:#b88718,color:#3b2e12,stroke-dasharray:5 5;
+    class apple,normalize,ble,eventbus,services,lifecycle,board current;
+    class android,mpris planned;
 ```
+
+Apple ANCS, AMS, and CTS are one current companion source. `IBluetooth` now owns only the BLE link, advertising, and transport maintenance; `ICompanionSource` owns source identity, availability, capabilities, normalized callbacks, and commands. `BluetoothManager` receives these contracts independently, so a provider can run without BLE. The ESP32 board currently composes both roles in one driver object, while tests inject separate transport and source objects. Android companion support and Linux MPRIS are planned adapters; they are not implemented yet.
 
 ---
 
@@ -96,7 +118,7 @@ Ersa Wearable Platform is a modular embedded watch environment. Its core event a
   - AMS shows track title, artist, and playback state, and sends supported play/pause and track controls. Call, media, and notification screens share an open monochrome layout.
   - Status reports connection and Apple service readiness. B1 schedules BLE advertising again when disconnected; advertising start is checked and retried after a disconnect.
 - **Portable Protocol Decoders**:
-  - ANCS and AMS byte decoding is independent of the ESP32 BLE transport. The current `IBluetooth` provider boundary can support future Android or Linux companions; MPRIS and Android support are not included yet.
+  - ANCS and AMS byte decoding is independent of the ESP32 BLE transport. `ICompanionSource` is the normalized provider contract; MPRIS and Android adapters are planned, not included yet.
 
 ---
 

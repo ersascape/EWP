@@ -21,21 +21,27 @@ static uint32_t host_millis() {
 namespace ersa {
 namespace services {
 
-class DummyBle : public hal::IBluetooth {
+class DummyBle : public hal::IBluetooth, public hal::ICompanionSource {
 public:
     Result<void> init() override { return Result<void>(); }
+    const char* sourceId() const override { return "none"; }
+    bool isAvailable() const override { return false; }
+    hal::CompanionCapabilities capabilities() const override { return {}; }
+    void setCallCallback(hal::CompanionCallCallback, void*) override {}
+    void setMediaCallback(hal::CompanionMediaCallback, void*) override {}
+    void setNotificationCallback(hal::CompanionNotificationCallback, void*) override {}
+    void setTimeCallback(hal::CompanionTimeCallback, void*) override {}
+    void setAvailabilityCallback(hal::CompanionAvailabilityCallback, void*) override {}
+    bool acceptCall() override { return false; }
+    bool rejectCall() override { return false; }
+    bool hangupCall() override { return false; }
+    bool dial(const char*) override { return false; }
+    bool mediaCommand(hal::CompanionMediaAction) override { return false; }
+    bool dismissNotification(uint32_t) override { return false; }
     void startAdvertising() override {}
     void stopAdvertising() override {}
     bool isConnected() const override { return false; }
-    void setCallCallback(hal::BleCallCallback, void*) override {}
-    void setMediaCallback(hal::BleMediaCallback, void*) override {}
     void setConnectionCallback(hal::BleConnectionCallback, void*) override {}
-    void setNotificationCallback(hal::BleNotificationCallback, void*) override {}
-    void acceptCall() override {}
-    void rejectCall() override {}
-    void hangupCall() override {}
-    void dial(const char*) override {}
-    void mediaCommand(hal::BleMediaAction) override {}
     const char* getDeviceName() const override { return "Ersa Wearable"; }
     const char* getDeviceAddress() const override { return "00:00:00:00:00:00"; }
 };
@@ -46,7 +52,7 @@ BluetoothManager& BluetoothManager::instance() {
     if (!s_instance) {
         static DummyBle s_dummyBle;
         static events::EventBus s_dummyBus;
-        static BluetoothManager s_dummy(s_dummyBle, s_dummyBus);
+        static BluetoothManager s_dummy(s_dummyBle, s_dummyBle, s_dummyBus);
         return s_dummy;
     }
     return *s_instance;
@@ -56,10 +62,11 @@ void BluetoothManager::setInstance(BluetoothManager* inst) {
     s_instance = inst;
 }
 
-BluetoothManager::BluetoothManager(hal::IBluetooth& ble, events::EventBus& bus)
-    : ble_(ble), bus_(bus) {}
+BluetoothManager::BluetoothManager(hal::IBluetooth& ble, hal::ICompanionSource& source, events::EventBus& bus)
+    : ble_(ble), source_(source), bus_(bus) {}
 
 Result<void> BluetoothManager::init() {
+    if (initialized_) return Result<void>();
     auto& storage = StorageService::instance();
     storage.init();
     recentCount_ = static_cast<size_t>(storage.getInt("recent_count", 0));
@@ -81,23 +88,46 @@ Result<void> BluetoothManager::init() {
     if (!incomingQueue_) incomingQueue_ = xQueueCreate(24, sizeof(events::Event));
     if (!incomingQueue_) return Result<void>(ErrorCode::OutOfMemory, "BLE event queue");
 #endif
-    ble_.setCallCallback(onBleCall, this);
-    ble_.setMediaCallback(onBleMedia, this);
+    source_.setCallCallback(onSourceCall, this);
+    source_.setMediaCallback(onSourceMedia, this);
     ble_.setConnectionCallback(onBleConnection, this);
-    ble_.setNotificationCallback(onBleNotification, this);
-    ble_.setTimeCallback([](uint32_t epoch, void* user) {
+    source_.setNotificationCallback(onSourceNotification, this);
+    source_.setAvailabilityCallback(onSourceAvailability, this);
+    source_.setTimeCallback([](uint32_t epoch, void* user) {
         auto* self = static_cast<BluetoothManager*>(user);
         if (self) self->receive(events::Event::createTimeSync(
-            epoch, events::TimeSource::BleCurrentTime, millis()));
+            epoch, events::TimeSource::Companion, millis()));
     }, this);
 
-    Result<void> res = ble_.init();
-    if (res.isOk()) ble_.startAdvertising();
-    return res;
+    Result<void> sourceResult = source_.initSource();
+    if (!sourceResult.isOk()) {
+        ble_.setConnectionCallback(nullptr, nullptr);
+        source_.setCallCallback(nullptr, nullptr);
+        source_.setMediaCallback(nullptr, nullptr);
+        source_.setNotificationCallback(nullptr, nullptr);
+        source_.setTimeCallback(nullptr, nullptr);
+        source_.setAvailabilityCallback(nullptr, nullptr);
+        source_.shutdownSource();
+        return sourceResult;
+    }
+    Result<void> transportResult = ble_.init();
+    if (!transportResult.isOk()) {
+        ble_.setConnectionCallback(nullptr, nullptr);
+        source_.setCallCallback(nullptr, nullptr);
+        source_.setMediaCallback(nullptr, nullptr);
+        source_.setNotificationCallback(nullptr, nullptr);
+        source_.setTimeCallback(nullptr, nullptr);
+        source_.setAvailabilityCallback(nullptr, nullptr);
+        source_.shutdownSource();
+    } else {
+        initialized_ = true;
+        ble_.startAdvertising();
+    }
+    return transportResult;
 }
 
 bool BluetoothManager::isConnected() const {
-    return ble_.isConnected();
+    return ble_.isConnected() || source_.isAvailable();
 }
 
 const char* BluetoothManager::getDeviceName() const {
@@ -109,7 +139,7 @@ const char* BluetoothManager::getDeviceAddress() const {
 }
 
 void BluetoothManager::restartAdvertising() {
-    if (isConnected()) return;
+    if (ble_.isConnected()) return;
     ble_.stopAdvertising();
     ble_.startAdvertising();
 }
@@ -120,22 +150,24 @@ uint32_t BluetoothManager::getCallDurationSec() const {
     return (now >= callStartMs_) ? ((now - callStartMs_) / 1000) : 0;
 }
 
-void BluetoothManager::acceptCall() {
-    if (isConnected() && callState_ == CallState::Incoming) ble_.acceptCall();
+bool BluetoothManager::acceptCall() {
+    return source_.isAvailable() && callState_ == CallState::Incoming &&
+           source_.capabilities().answerReject && source_.acceptCall();
 }
 
-void BluetoothManager::rejectCall() {
-    if (isConnected() && callState_ == CallState::Incoming) ble_.rejectCall();
+bool BluetoothManager::rejectCall() {
+    return source_.isAvailable() && callState_ == CallState::Incoming &&
+           source_.capabilities().answerReject && source_.rejectCall();
 }
 
-void BluetoothManager::hangupCall() {
-    if (canHangup() && callState_ == CallState::Active) ble_.hangupCall();
+bool BluetoothManager::hangupCall() {
+    return canHangup() && callState_ == CallState::Active && source_.hangupCall();
 }
 
-void BluetoothManager::dial(const char* number, const char* name) {
-    if (!canDial() || !number || number[0] == '\0') return;
+bool BluetoothManager::dial(const char* number, const char* name) {
+    if (!canDial() || !number || number[0] == '\0') return false;
 
-    ble_.dial(number);
+    if (!source_.dial(number)) return false;
 
     strncpy(currentNumber_, number, sizeof(currentNumber_) - 1);
     currentNumber_[sizeof(currentNumber_) - 1] = '\0';
@@ -155,13 +187,14 @@ void BluetoothManager::dial(const char* number, const char* name) {
     events::Event evt = events::Event::createCall(
         events::EventType::CallAccepted, currentCaller_, currentNumber_, 1, callStartMs_);
     bus_.publish(evt);
+    return true;
 }
 
-void BluetoothManager::dialRecent(size_t index) {
-    if (recentCount_ == 0) return;
+bool BluetoothManager::dialRecent(size_t index) {
+    if (recentCount_ == 0) return false;
     if (index >= recentCount_) index = 0;
-    if (!recents_[index].number[0]) return;
-    dial(recents_[index].number, recents_[index].name);
+    if (!recents_[index].number[0]) return false;
+    return dial(recents_[index].number, recents_[index].name);
 }
 
 const RecentCall& BluetoothManager::getRecentCall(size_t index) const {
@@ -231,32 +264,32 @@ void BluetoothManager::addRecentCall(const char* name, const char* number) {
 #endif
 }
 
-void BluetoothManager::mediaPlay() {
-    if (mediaReady()) ble_.mediaCommand(hal::BleMediaAction::Play);
+bool BluetoothManager::mediaPlay() {
+    return mediaReady() && source_.mediaCommand(hal::CompanionMediaAction::Play);
 }
 
-void BluetoothManager::mediaPause() {
-    if (mediaReady()) ble_.mediaCommand(hal::BleMediaAction::Pause);
+bool BluetoothManager::mediaPause() {
+    return mediaReady() && source_.mediaCommand(hal::CompanionMediaAction::Pause);
 }
 
-void BluetoothManager::mediaToggle() {
-    if (mediaReady()) ble_.mediaCommand(hal::BleMediaAction::Toggle);
+bool BluetoothManager::mediaToggle() {
+    return mediaReady() && source_.mediaCommand(hal::CompanionMediaAction::Toggle);
 }
 
-void BluetoothManager::mediaNext() {
-    if (mediaReady()) ble_.mediaCommand(hal::BleMediaAction::Next);
+bool BluetoothManager::mediaNext() {
+    return mediaReady() && source_.mediaCommand(hal::CompanionMediaAction::Next);
 }
 
-void BluetoothManager::mediaPrevious() {
-    if (mediaReady()) ble_.mediaCommand(hal::BleMediaAction::Previous);
+bool BluetoothManager::mediaPrevious() {
+    return mediaReady() && source_.mediaCommand(hal::CompanionMediaAction::Previous);
 }
 
 void BluetoothManager::simulateIncomingCall(const char* name, const char* number) {
-    onBleCall(hal::BleCallAction::Incoming, name, number, this);
+    onSourceCall(hal::CompanionCallAction::Incoming, name, number, this);
 }
 
 void BluetoothManager::simulateMedia(const char* title, const char* artist, bool playing) {
-    onBleMedia(playing, title, artist, this);
+    onSourceMedia(playing, title, artist, this);
 }
 
 void BluetoothManager::receive(const events::Event& event) {
@@ -280,7 +313,9 @@ void BluetoothManager::receive(const events::Event& event) {
 }
 
 void BluetoothManager::tick() {
+    if (!initialized_) return;
     ble_.tick();
+    source_.tickSource();
 #if defined(ARDUINO)
     events::Event event;
     if (incomingQueue_ && xQueueReceive(static_cast<QueueHandle_t>(incomingQueue_), &event, 0) == pdTRUE) {
@@ -352,7 +387,7 @@ void BluetoothManager::apply(const events::Event& event) {
                             event.notification.app, event.notification.uid,
                             event.notification.canDismissRemotely);
             break;
-        case EventType::BleDisconnected:
+        case EventType::CompanionDisconnected:
             callState_ = CallState::Idle; callStartMs_ = 0;
             currentCaller_[0] = currentNumber_[0] = 0;
             mediaPlaying_ = false; mediaTitle_[0] = mediaArtist_[0] = 0;
@@ -364,15 +399,15 @@ void BluetoothManager::apply(const events::Event& event) {
     bus_.publish(event);
 }
 
-void BluetoothManager::onBleCall(hal::BleCallAction action, const char* caller, const char* number, void* user) {
+void BluetoothManager::onSourceCall(hal::CompanionCallAction action, const char* caller, const char* number, void* user) {
     auto* self = static_cast<BluetoothManager*>(user);
     if (!self) return;
-    const auto type = action == hal::BleCallAction::Incoming ? events::EventType::CallIncoming :
-                      action == hal::BleCallAction::Answered ? events::EventType::CallAccepted : events::EventType::CallEnded;
+    const auto type = action == hal::CompanionCallAction::Incoming ? events::EventType::CallIncoming :
+                      action == hal::CompanionCallAction::Answered ? events::EventType::CallAccepted : events::EventType::CallEnded;
     self->receive(events::Event::createCall(type, caller, number, uint8_t(action), millis()));
 }
 
-void BluetoothManager::onBleMedia(bool playing, const char* title, const char* artist, void* user) {
+void BluetoothManager::onSourceMedia(bool playing, const char* title, const char* artist, void* user) {
     auto* self = static_cast<BluetoothManager*>(user);
     if (self) self->receive(events::Event::createMedia(title, artist, playing, millis()));
 }
@@ -382,8 +417,14 @@ void BluetoothManager::onBleConnection(bool connected, void* user) {
     if (self) self->receive(events::Event(connected ? events::EventType::BleConnected : events::EventType::BleDisconnected, millis()));
 }
 
+void BluetoothManager::onSourceAvailability(bool available, void* user) {
+    auto* self = static_cast<BluetoothManager*>(user);
+    if (self) self->receive(events::Event(available ? events::EventType::CompanionConnected :
+                                          events::EventType::CompanionDisconnected, millis()));
+}
+
 void BluetoothManager::simulateNotification(const char* title, const char* message, const char* app) {
-    onBleNotification(title, message, app, 1, false, this);
+    onSourceNotification(title, message, app, 1, false, this);
 }
 
 const AppNotification& BluetoothManager::getNotification(size_t index) const {
@@ -397,7 +438,8 @@ const AppNotification& BluetoothManager::getNotification(size_t index) const {
 bool BluetoothManager::dismissNotification(size_t index) {
     if (index >= notifCount_) return false;
     const uint32_t uid = notifications_[index].uid;
-    if (notifications_[index].canDismissRemotely) ble_.dismissNotification(uid);
+    if (notifications_[index].canDismissRemotely && source_.isAvailable() && source_.capabilities().remoteDismiss)
+        source_.dismissNotification(uid);
     if (dismissedCount_ == MAX_DISMISSED_UIDS) {
         for (size_t i = 1; i < dismissedCount_; ++i) dismissedUids_[i - 1] = dismissedUids_[i];
         --dismissedCount_;
@@ -442,7 +484,7 @@ void BluetoothManager::clearNotifications() {
     notifCount_ = 0;
 }
 
-void BluetoothManager::onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user) {
+void BluetoothManager::onSourceNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user) {
     auto* self = static_cast<BluetoothManager*>(user);
     if (!self) return;
 

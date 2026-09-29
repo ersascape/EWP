@@ -33,7 +33,7 @@ ersa::app::ApplicationManager& appManager = ersa::app::ApplicationManager::insta
 ersa::services::TimeService timeService(board.getRtc(), eventBus);
 ersa::services::PowerManager powerManager(board.getBattery(), eventBus);
 ersa::services::DisplayManager displayManager(board.getDisplay());
-ersa::services::BluetoothManager bluetoothManager(board.getBluetooth(), eventBus);
+ersa::services::BluetoothManager bluetoothManager(board.getBluetooth(), board.getCompanionSource(), eventBus);
 
 uint32_t shownMinute = UINT32_MAX;
 uint8_t shownDay = 0;
@@ -263,6 +263,8 @@ void WatchUi::begin() {
             evt.type == ersa::events::EventType::ButtonLongPressed ||
             evt.type == ersa::events::EventType::BleConnected ||
             evt.type == ersa::events::EventType::BleDisconnected ||
+            evt.type == ersa::events::EventType::CompanionConnected ||
+            evt.type == ersa::events::EventType::CompanionDisconnected ||
             evt.type == ersa::events::EventType::CallIncoming ||
             evt.type == ersa::events::EventType::CallAccepted ||
             evt.type == ersa::events::EventType::CallRejected ||
@@ -344,7 +346,9 @@ void WatchUi::begin() {
     }, &appManager);
 
     for (auto type : {ersa::events::EventType::CallEnded, ersa::events::EventType::CallAccepted,
-                      ersa::events::EventType::BleDisconnected}) {
+                      ersa::events::EventType::BleDisconnected,
+                      ersa::events::EventType::CompanionConnected,
+                      ersa::events::EventType::CompanionDisconnected}) {
         eventBus.subscribe(type, [](const ersa::events::Event&, void* user) {
             auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
             if (!mgr || !mgr->getActiveApp()) return;
@@ -369,6 +373,14 @@ void WatchUi::begin() {
         if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_status") == 0)
             mgr->markDirty(false);
     }, &appManager);
+    for (auto type : {ersa::events::EventType::CompanionConnected,
+                      ersa::events::EventType::CompanionDisconnected}) {
+        eventBus.subscribe(type, [](const ersa::events::Event&, void* user) {
+            auto* mgr = static_cast<ersa::app::ApplicationManager*>(user);
+            if (mgr && mgr->getActiveApp() && strcmp(mgr->getActiveApp()->getId(), "app_status") == 0)
+                mgr->markDirty(false);
+        }, &appManager);
+    }
 
     ersa::app::registerAllApps(appManager);
     appManager.switchTo("watchface_clock");
@@ -485,7 +497,13 @@ void WatchUi::tick() {
     // Passive BLE traffic must wake/process the UI but must not continually
     // restart the inactivity timer. Buttons represent deliberate use; the
     // BLE callback notification wakes this task independently.
-    const bool sleepEligible = automaticSleepReady && userIdleMs >= 30000 && !appBusy &&
+    // On ESP32-C3 the USB Serial/JTAG PHY loses its APB/USB clock during
+    // automatic light sleep. Keep the UI's NO_LIGHT_SLEEP lock while a host
+    // is attached so the console doesn't disappear until the cable/monitor
+    // is disconnected. Arduino's HWCDC Serial bool reflects CDC connection.
+    const bool usbConsoleAttached = bool(Serial);
+    const bool sleepEligible = automaticSleepReady && !usbConsoleAttached &&
+                               userIdleMs >= 30000 && !appBusy &&
                                !NetSync::isSyncing() && !board.getEsp32Display().isBusy();
     setSleepAllowed(sleepEligible);
 
@@ -498,6 +516,8 @@ void WatchUi::tick() {
         uint32_t waitMs = secondsToMinute * 1000UL;
         const uint32_t bleWaitMs = bluetoothManager.nextWakeDelayMs(millis());
         if (bleWaitMs < waitMs) waitMs = bleWaitMs;
+        const uint32_t batteryWaitMs = powerManager.nextBatterySampleDelayMs(millis());
+        if (batteryWaitMs < waitMs) waitMs = batteryWaitMs;
         if (watchfaceMediaPending) {
             const uint32_t elapsed = uint32_t(millis() - watchfaceMediaChangedAt);
             const uint32_t mediaWaitMs = elapsed >= 500 ? 0 : 500 - elapsed;

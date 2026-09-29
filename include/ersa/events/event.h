@@ -30,6 +30,8 @@ enum class EventType : uint16_t {
 
     BleConnected,
     BleDisconnected,
+    CompanionConnected,
+    CompanionDisconnected,
 
     CallIncoming,
     CallAccepted,
@@ -55,6 +57,7 @@ enum class TimeSource : uint8_t {
     Unknown = 0,
     Network,
     BleCurrentTime,
+    Companion,
     Manual
 };
 

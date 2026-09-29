@@ -51,6 +51,8 @@ PM lock and CPU-mode profiling is now enabled for the current diagnostic firmwar
 
 Use bounded fast discovery followed by slower advertising, and request validated active/idle connection parameters. Record what the phone actually accepts. Apple's published QA1931 lists specific advertising intervals; the current 500 ms value is not one of them. Use supported values and test background reconnect rather than assuming a generic interval is optimal.
 
+The peripheral now advertises at Apple's exact 20 ms fast interval for 30 seconds, then switches to 546.25 ms, with the transition included in the idle scheduler deadline. Service discovery now treats a peer without ANCS/AMS/CTS as a valid connection instead of retrying Apple discovery forever. Negotiated connection parameters still need hardware capture before tuning.
+
 `Esp32AppleClient::discover()` returns false when ANCS, AMS and CTS are all absent. The worker then repeats discovery with a two-second pause. A valid Android/Linux companion connection without those services can consequently keep searching indefinitely. Treat successful discovery with zero optional capabilities as a valid result; retry only transient failures with a budget, and rediscover on a relevant service change or explicit request.
 
 ### 5. Blocking GATT operations bypass application timeout handling
@@ -99,6 +101,8 @@ Represent voltage, estimate confidence, measurement validity, and unknown chargi
 
 Critical shutdown depends partly on the generic percentage curve and on filtered voltage. Invalid/out-of-range readings become “disconnected,” which currently resets the power level to Normal. Add an explicit invalid-measurement policy. On a timed critical-battery wake, check voltage before initializing BLE and doing a full display update, rather than repeating a normal boot and waiting for three fresh qualifying samples.
 
+Adaptive sampling is now implemented in `PowerManager`: healthy readings use a 60-second interval, mid-range readings use 20–30 seconds, and low/critical readings retain 10-second checks. The UI's idle wait includes the next battery sample deadline, and the host test verifies the slower interval and three-sample critical qualification. This reduces ADC work while healthy; battery-life improvement still requires current measurement on hardware.
+
 ### 10. Network work blocks the UI and bypasses NetworkManager
 
 Apps call synchronous `NetSync` routines directly. During a long sync the UI cannot dispatch BLE events or service buttons normally; bounded queues can overflow. Normal sync completion does turn Wi-Fi off, which is good. The panic log confirms that disabling Wi-Fi modem sleep with BLE active makes ESP-IDF abort. `connectWiFi()` now keeps modem sleep enabled; firmware compilation succeeded, while hardware testing of Wi-Fi sync with BLE connected remains pending.
@@ -121,6 +125,8 @@ Use a bounded network worker with cancellation, result events and a guaranteed r
 ## Recommended ownership model
 
 Keep protocol parsing and feature models portable. Put platform-specific sleep, clocks, GPIO, ADC, radio and display operations behind HAL interfaces.
+
+Apple ANCS/AMS/CTS is one source, not the application model. The new `ICompanionSource` contract carries source identity, availability, runtime capabilities, normalized callbacks, and accepted/rejected commands independently of `IBluetooth` transport. `BluetoothManager` injects both contracts separately; the T1E currently composes them in one ESP32 driver object, while host tests use distinct transport and source objects. MPRIS belongs in a Linux source adapter, while Android can supply an independent companion source. A multi-source registry and extracting `Esp32AppleClient` into a standalone provider remain follow-up work.
 
 1. One application executor owns UI/model changes and consumes bounded events. Calls/disconnects have reserved capacity; replaceable media state is coalesced.
 2. A power coordinator combines interaction policy, real hardware leases, battery state and the earliest service deadline. It requests automatic-sleep eligibility through the platform HAL.

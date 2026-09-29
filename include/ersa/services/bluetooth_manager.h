@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ersa/hal/bluetooth.h"
+#include "ersa/hal/companion_source.h"
 #include "ersa/events/event_bus.h"
 #include "ersa/common/types.h"
 
@@ -35,15 +36,19 @@ public:
     static BluetoothManager& instance();
     static void setInstance(BluetoothManager* inst);
 
-    BluetoothManager(hal::IBluetooth& ble, events::EventBus& bus);
+    BluetoothManager(hal::IBluetooth& ble, hal::ICompanionSource& source, events::EventBus& bus);
 
     Result<void> init();
     void tick();
     void setWakeCallback(WakeCallback callback, void* user) { wakeCallback_ = callback; wakeUserData_ = user; }
-    bool canDial() const { return isConnected() && ble_.supportsDial(); }
-    bool canHangup() const { return isConnected() && ble_.supportsHangup(); }
-    bool notificationsReady() const { return ble_.notificationsReady(); }
-    bool mediaReady() const { return ble_.mediaReady(); }
+    bool canDial() const { return source_.isAvailable() && source_.capabilities().dial; }
+    bool canHangup() const { return source_.isAvailable() && source_.capabilities().hangup; }
+    bool notificationsReady() const { return source_.isAvailable() && source_.capabilities().notifications; }
+    bool mediaReady() const { return source_.isAvailable() && source_.capabilities().media; }
+    const char* companionSourceId() const { return source_.sourceId(); }
+    hal::CompanionCapabilities companionCapabilities() const { return source_.capabilities(); }
+    bool companionSourceAvailable() const { return source_.isAvailable(); }
+    bool bleConnected() const { return ble_.isConnected(); }
 
     bool isConnected() const;
     bool isAdvertising() const { return ble_.isAdvertising(); }
@@ -58,11 +63,11 @@ public:
     const char* getCallerNumber() const { return currentNumber_; }
     uint32_t getCallDurationSec() const;
 
-    void acceptCall();
-    void rejectCall();
-    void hangupCall();
-    void dial(const char* number, const char* name = nullptr);
-    void dialRecent(size_t index = 0);
+    bool acceptCall();
+    bool rejectCall();
+    bool hangupCall();
+    bool dial(const char* number, const char* name = nullptr);
+    bool dialRecent(size_t index = 0);
 
     // Recent calls history
     size_t getRecentCallCount() const { return recentCount_; }
@@ -74,11 +79,11 @@ public:
     const char* getMediaTitle() const { return mediaTitle_; }
     const char* getMediaArtist() const { return mediaArtist_; }
 
-    void mediaPlay();
-    void mediaPause();
-    void mediaToggle();
-    void mediaNext();
-    void mediaPrevious();
+    bool mediaPlay();
+    bool mediaPause();
+    bool mediaToggle();
+    bool mediaNext();
+    bool mediaPrevious();
 
     // Testing / Simulation hooks
     void simulateIncomingCall(const char* name, const char* number);
@@ -93,10 +98,11 @@ public:
     void clearNotifications();
 
 private:
-    static void onBleCall(hal::BleCallAction action, const char* caller, const char* number, void* user);
-    static void onBleMedia(bool playing, const char* title, const char* artist, void* user);
+    static void onSourceCall(hal::CompanionCallAction action, const char* caller, const char* number, void* user);
+    static void onSourceMedia(bool playing, const char* title, const char* artist, void* user);
     static void onBleConnection(bool connected, void* user);
-    static void onBleNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user);
+    static void onSourceAvailability(bool available, void* user);
+    static void onSourceNotification(const char* title, const char* message, const char* app, uint32_t uid, bool canDismissRemotely, void* user);
 
     void receive(const events::Event& event);
     void apply(const events::Event& event);
@@ -106,6 +112,7 @@ private:
     WakeCallback wakeCallback_{nullptr};
     void* wakeUserData_{nullptr};
     hal::IBluetooth& ble_;
+    hal::ICompanionSource& source_;
     events::EventBus& bus_;
 
     CallState callState_{CallState::Idle};
@@ -127,6 +134,7 @@ private:
     bool mediaPlaying_{false};
     char mediaTitle_[32]{"No Media"};
     char mediaArtist_[32]{"Bluetooth Idle"};
+    bool initialized_{false};
 };
 
 } // namespace services

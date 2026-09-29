@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     const std::string directory = argv[1];
     ersa::events::EventBus bus;
     ersa::test::MockBluetooth provider;
-    ersa::services::BluetoothManager manager(provider, bus);
+    ersa::services::BluetoothManager manager(provider, provider, bus);
     ersa::services::BluetoothManager::setInstance(&manager);
     manager.init();
     provider.simulateConnection(true);

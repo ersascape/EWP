@@ -257,18 +257,21 @@ void test_power_manager() {
     TEST_ASSERT(power.getBatteryPercent() == 60, "Percentage matches");
     TEST_ASSERT(power.isBatteryConnected(), "Battery connected");
     TEST_ASSERT(!power.isCharging(), "Not charging");
+    TEST_ASSERT(power.nextBatterySampleDelayMs(10000) == 10000,
+                "moderate battery voltage uses a 20-second sample interval");
 
     battery.setMv(3300);
     battery.setPct(2);
     power.tick(10000);
-    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical voltage requires repeated samples");
     power.tick(20000);
     TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical voltage remains qualified across samples");
     power.tick(30000);
+    TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical voltage requires repeated samples");
+    power.tick(40000);
     TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Critical, "critical battery is latched after three samples");
     battery.setMv(3800);
     battery.setPct(60);
-    power.tick(40000);
+    power.tick(50000);
     TEST_ASSERT(power.getBatteryPowerLevel() == services::BatteryPowerLevel::Normal, "critical state clears after clear voltage recovery");
 
     // WakeLock RAII tests
@@ -531,7 +534,8 @@ void test_config_and_fallbacks() {
 void test_bluetooth_manager() {
     events::EventBus bus;
     test::MockBluetooth mockBle;
-    services::BluetoothManager bleMgr(mockBle, bus);
+    test::MockBluetooth mockSource; // Provider is a separate object from the BLE transport.
+    services::BluetoothManager bleMgr(mockBle, mockSource, bus);
     bleMgr.init();
 
     // 1. Check initial state
@@ -543,6 +547,7 @@ void test_bluetooth_manager() {
     // 2. Track events from EventBus
     bool gotBleConnected = false;
     bool gotBleDisconnected = false;
+    bool gotSourceDisconnected = false;
     bool gotCallIncoming = false;
     bool gotCallAccepted = false;
     bool gotCallEnded = false;
@@ -555,6 +560,9 @@ void test_bluetooth_manager() {
     bus.subscribe(events::EventType::BleDisconnected, [](const events::Event&, void* u) {
         *static_cast<bool*>(u) = true;
     }, &gotBleDisconnected);
+    bus.subscribe(events::EventType::CompanionDisconnected, [](const events::Event&, void* u) {
+        *static_cast<bool*>(u) = true;
+    }, &gotSourceDisconnected);
 
     bus.subscribe(events::EventType::CallIncoming, [](const events::Event&, void* u) {
         *static_cast<bool*>(u) = true;
@@ -575,11 +583,17 @@ void test_bluetooth_manager() {
 
     // 3. Test Connection
     mockBle.simulateConnection(true);
+    TEST_ASSERT(bleMgr.isConnected(), "Transport reports its link even before a provider is ready");
+    TEST_ASSERT(!bleMgr.notificationsReady(), "Unavailable provider exposes no capabilities");
+    TEST_ASSERT(!bleMgr.acceptCall(), "Unsupported or unavailable provider rejects call commands");
+    mockSource.simulateConnection(true);
     TEST_ASSERT(bleMgr.isConnected(), "BluetoothManager should report connected");
     TEST_ASSERT(gotBleConnected, "EventBus should receive BleConnected");
+    TEST_ASSERT(strcmp(bleMgr.companionSourceId(), "test-mock") == 0,
+                "Manager exposes the selected source identity");
 
     // 4. Test Incoming Call
-    mockBle.simulateIncomingCall("Alice", "+15551234");
+    mockSource.simulateIncomingCall("Alice", "+15551234");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Incoming, "Call state should be Incoming");
     TEST_ASSERT(strcmp(bleMgr.getCallerName(), "Alice") == 0, "Caller name should be Alice");
     TEST_ASSERT(strcmp(bleMgr.getCallerNumber(), "+15551234") == 0, "Caller number should match");
@@ -591,75 +605,75 @@ void test_bluetooth_manager() {
                 "Recent contacts should be persisted for the PBAP-ready recent list");
 
     // 5. Test Accept Call (B1 pressed)
-    bleMgr.acceptCall();
+    TEST_ASSERT(bleMgr.acceptCall(), "Provider confirms that answer command was accepted");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Incoming, "Submission must not fabricate active call state");
     TEST_ASSERT(!gotCallAccepted, "No accepted event before phone confirmation");
-    mockBle.simulateCallAnswered();
+    mockSource.simulateCallAnswered();
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Phone confirms active call");
-    TEST_ASSERT(mockBle.acceptCount() == 1, "HAL acceptCall should be called once");
+    TEST_ASSERT(mockSource.acceptCount() == 1, "HAL acceptCall should be called once");
     TEST_ASSERT(gotCallAccepted, "EventBus should receive CallAccepted");
 
     // 6. Test Hang Up Call (B2 pressed)
-    bleMgr.hangupCall();
+    TEST_ASSERT(bleMgr.hangupCall(), "Provider confirms that hangup command was accepted");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Hangup waits for phone confirmation");
-    mockBle.simulateCallEnded();
+    mockSource.simulateCallEnded();
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Call end returns Calls to its recent list");
-    TEST_ASSERT(mockBle.hangupCount() == 1, "HAL hangupCall should be called once");
+    TEST_ASSERT(mockSource.hangupCount() == 1, "HAL hangupCall should be called once");
     TEST_ASSERT(gotCallEnded, "EventBus should receive CallEnded");
 
     // 7. Test Quick Dial Recent (Hold B1)
-    bleMgr.dialRecent(0); // Dial Alice
-    TEST_ASSERT(mockBle.dialCount() == 1, "HAL dial should be called once");
-    TEST_ASSERT(strcmp(mockBle.lastDialed(), "+15551234") == 0, "Dialed number should match Alice's number");
+    TEST_ASSERT(bleMgr.dialRecent(0), "Provider accepts dialing a saved recent"); // Dial Alice
+    TEST_ASSERT(mockSource.dialCount() == 1, "HAL dial should be called once");
+    TEST_ASSERT(strcmp(mockSource.lastDialed(), "+15551234") == 0, "Dialed number should match Alice's number");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Active, "Call state should be Active after dial");
 
     bleMgr.hangupCall();
 
-    mockBle.simulateIncomingCall("Name Only", "");
+    mockSource.simulateIncomingCall("Name Only", "");
     TEST_ASSERT(bleMgr.getRecentCallCount() >= 2, "Name-only ANCS caller is kept in recent calls");
     TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Name Only") == 0, "Name-only caller appears first in recents");
     TEST_ASSERT(bleMgr.getRecentCall(0).number[0] == '\0', "Name-only caller remains visibly non-dialable");
     TEST_ASSERT(services::StorageService::instance().getString("recent_name_0") == "Name Only",
                 "Name-only recent caller is persisted");
-    mockBle.simulateCallEnded();
+    mockSource.simulateCallEnded();
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Name-only call end returns to recents");
 
-    mockBle.simulateIncomingCall("", "");
+    mockSource.simulateIncomingCall("", "");
     TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "unknown caller") == 0,
                 "Call is retained even if ANCS has not delivered caller attributes");
     const size_t countBeforeCallerUpdate = bleMgr.getRecentCallCount();
-    mockBle.simulateIncomingCall("Bob", "+15559876");
+    mockSource.simulateIncomingCall("Bob", "+15559876");
     TEST_ASSERT(bleMgr.getRecentCallCount() == countBeforeCallerUpdate,
                 "Late caller attributes enrich the pending recent instead of adding a duplicate");
     TEST_ASSERT(strcmp(bleMgr.getRecentCall(0).name, "Bob") == 0 &&
                 strcmp(bleMgr.getRecentCall(0).number, "+15559876") == 0,
                 "Late caller details replace the unknown recent entry");
-    mockBle.simulateCallEnded();
+    mockSource.simulateCallEnded();
 
     // 8. Test Media Control & Updates
-    mockBle.simulateMedia(true, "Starboy", "The Weeknd");
+    mockSource.simulateMedia(true, "Starboy", "The Weeknd");
     TEST_ASSERT(bleMgr.isPlaying(), "Media state should be playing");
     TEST_ASSERT(strcmp(bleMgr.getMediaTitle(), "Starboy") == 0, "Title should be Starboy");
     TEST_ASSERT(strcmp(bleMgr.getMediaArtist(), "The Weeknd") == 0, "Artist should be The Weeknd");
     TEST_ASSERT(strcmp(lastMediaTrackReceived, "Starboy") == 0, "EventBus should receive MediaTrackChanged");
 
     // Test B1 next track
-    bleMgr.mediaNext();
-    TEST_ASSERT(mockBle.mediaCmdCount() == 1, "mediaCommand should be called once");
-    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Next, "Action should be Next");
+    TEST_ASSERT(bleMgr.mediaNext(), "Provider accepts media command");
+    TEST_ASSERT(mockSource.mediaCmdCount() == 1, "mediaCommand should be called once");
+    TEST_ASSERT(mockSource.lastMediaAction() == hal::CompanionMediaAction::Next, "Action should be Next");
 
     // Test B2 play/pause toggle
-    bleMgr.mediaToggle();
-    TEST_ASSERT(mockBle.mediaCmdCount() == 2, "mediaCommand should be called twice");
-    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Toggle, "Action should be Toggle");
+    TEST_ASSERT(bleMgr.mediaToggle(), "Provider accepts media toggle");
+    TEST_ASSERT(mockSource.mediaCmdCount() == 2, "mediaCommand should be called twice");
+    TEST_ASSERT(mockSource.lastMediaAction() == hal::CompanionMediaAction::Toggle, "Action should be Toggle");
     TEST_ASSERT(bleMgr.isPlaying(), "Command submission must not fabricate paused state");
-    mockBle.simulateMedia(false, "Starboy", "The Weeknd");
+    mockSource.simulateMedia(false, "Starboy", "The Weeknd");
     TEST_ASSERT(!bleMgr.isPlaying(), "Phone confirms pause");
 
     // Test previous track
     bleMgr.mediaPrevious();
-    TEST_ASSERT(mockBle.mediaCmdCount() == 3, "mediaCommand should be called 3 times");
-    TEST_ASSERT(mockBle.lastMediaAction() == hal::BleMediaAction::Previous, "Action should be Previous");
+    TEST_ASSERT(mockSource.mediaCmdCount() == 3, "mediaCommand should be called 3 times");
+    TEST_ASSERT(mockSource.lastMediaAction() == hal::CompanionMediaAction::Previous, "Action should be Previous");
 
     // 9. Test Notification
     bool gotNotification = false;
@@ -678,7 +692,7 @@ void test_bluetooth_manager() {
         strncpy(c->msg, e.notification.message, 63);
     }, &cap);
 
-    mockBle.simulateNotification("WhatsApp", "Hey! Meeting starts in 5 mins", "WhatsApp", 42);
+    mockSource.simulateNotification("WhatsApp", "Hey! Meeting starts in 5 mins", "WhatsApp", 42);
     TEST_ASSERT(gotNotification, "EventBus should receive NotificationReceived");
     TEST_ASSERT(strcmp(notifTitle, "WhatsApp") == 0, "Event title should match");
     TEST_ASSERT(strcmp(notifMsg, "Hey! Meeting starts in 5 mins") == 0, "Event message should match");
@@ -686,49 +700,51 @@ void test_bluetooth_manager() {
     TEST_ASSERT(strcmp(bleMgr.getNotification(0).title, "WhatsApp") == 0, "Notification title should match");
     TEST_ASSERT(strcmp(bleMgr.getNotification(0).message, "Hey! Meeting starts in 5 mins") == 0, "Notification message should match");
 
-    mockBle.simulateNotification("Updated", "new body", "Mail", 42);
+    mockSource.simulateNotification("Updated", "new body", "Mail", 42);
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Modified UID replaces history entry");
     TEST_ASSERT(strcmp(bleMgr.getNotification(0).title, "Updated") == 0, "Updated title retained");
 
-    mockBle.simulateNotification(nullptr, nullptr, "", 42);
+    mockSource.simulateNotification(nullptr, nullptr, "", 42);
     TEST_ASSERT(bleMgr.getNotificationCount() == 0, "Removed UID leaves notification history");
-    mockBle.simulateNotification("New session data", "body", "Mail", 43);
+    mockSource.simulateNotification("New session data", "body", "Mail", 43);
 
-    mockBle.simulateNotification(nullptr, nullptr, nullptr, 0);
+    mockSource.simulateNotification(nullptr, nullptr, nullptr, 0);
     TEST_ASSERT(bleMgr.isConnected(), "ANCS subscription reset keeps BLE link connected");
     TEST_ASSERT(bleMgr.getNotificationCount() == 0, "ANCS reset clears old session history");
-    mockBle.simulateNotification("Recovered", "body", "Mail", 44);
+    mockSource.simulateNotification("Recovered", "body", "Mail", 44);
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Notifications resume after subscription reset");
 
-    mockBle.simulateNotification("Second", "second body", "Mail", 45, true);
+    mockSource.simulateNotification("Second", "second body", "Mail", 45, true);
     TEST_ASSERT(bleMgr.getNotificationCount() == 2, "Two notifications can be browsed");
     TEST_ASSERT(bleMgr.dismissNotification(0), "Selected notification can be dismissed");
-    TEST_ASSERT(mockBle.notificationDismissCount() == 1 && mockBle.lastDismissedUid() == 45,
+    TEST_ASSERT(mockSource.notificationDismissCount() == 1 && mockSource.lastDismissedUid() == 45,
                 "Advertised dismissal action is forwarded to the phone");
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Dismiss removes only selected notification");
     TEST_ASSERT(bleMgr.getNotification(0).uid == 44, "Other notification remains visible");
     gotNotification = false;
-    mockBle.simulateNotification("Second updated", "late body", "Mail", 45);
+    mockSource.simulateNotification("Second updated", "late body", "Mail", 45);
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "Late ANCS update cannot restore dismissed UID");
     TEST_ASSERT(!gotNotification, "Late dismissed update does not reopen notification screen");
     TEST_ASSERT(!bleMgr.dismissNotification(1), "Out-of-range dismissal is ignored");
-    mockBle.simulateNotification(nullptr, nullptr, "", 45);
-    mockBle.simulateNotification("New UID", "new body", "Mail", 45);
+    mockSource.simulateNotification(nullptr, nullptr, "", 45);
+    mockSource.simulateNotification("New UID", "new body", "Mail", 45);
     TEST_ASSERT(bleMgr.getNotificationCount() == 2, "Removal releases UID suppression");
-    mockBle.simulateNotification(nullptr, nullptr, nullptr, 0);
+    mockSource.simulateNotification(nullptr, nullptr, nullptr, 0);
     TEST_ASSERT(bleMgr.getNotificationCount() == 0, "ANCS reset clears notification history");
-    mockBle.simulateNotification("New session", "body", "Mail", 45);
+    mockSource.simulateNotification("New session", "body", "Mail", 45);
     TEST_ASSERT(bleMgr.getNotificationCount() == 1, "New session accepts previously dismissed UID");
 
     // 10. Disconnect
     mockBle.simulateConnection(false);
+    mockSource.simulateConnection(false);
     TEST_ASSERT(!bleMgr.isConnected(), "Should report disconnected");
     TEST_ASSERT(gotBleDisconnected, "EventBus should receive BleDisconnected");
+    TEST_ASSERT(gotSourceDisconnected, "Provider availability loss is transport-neutral");
     TEST_ASSERT(bleMgr.getCallState() == services::CallState::Idle, "Disconnect clears stale call");
     TEST_ASSERT(!bleMgr.isPlaying(), "Disconnect clears media state");
     TEST_ASSERT(bleMgr.getNotificationCount() == 0, "Disconnect invalidates ANCS session UIDs");
     bleMgr.acceptCall();
-    TEST_ASSERT(mockBle.acceptCount() == 1, "Cannot answer after disconnect");
+    TEST_ASSERT(mockSource.acceptCount() == 1, "Cannot answer after disconnect");
     bleMgr.restartAdvertising();
     TEST_ASSERT(mockBle.isAdvertising(), "Manual reconnect advertises again");
 

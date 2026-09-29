@@ -6,6 +6,8 @@
 #include "ersa/hal/rtc.h"
 #include "ersa/hal/battery.h"
 #include "ersa/hal/input.h"
+#include "ersa/hal/bluetooth.h"
+#include "ersa/hal/companion_source.h"
 
 namespace ersa {
 namespace board {
@@ -26,6 +28,8 @@ public:
     virtual hal::IRtc& getRtc() = 0;
     virtual hal::IBattery& getBattery() = 0;
     virtual hal::IInput& getInput() = 0;
+    virtual hal::IBluetooth& getBluetooth() = 0;
+    virtual hal::ICompanionSource& getCompanionSource() = 0;
 
     virtual uint32_t getUptimeMs() const = 0;
     virtual void delayMs(uint32_t ms) = 0;

@@ -26,7 +26,8 @@ public:
     hal::IRtc& getRtc() override { return rtc_; }
     hal::IBattery& getBattery() override { return battery_; }
     hal::IInput& getInput() override { return input_; }
-    hal::IBluetooth& getBluetooth() { return bluetooth_; }
+    hal::IBluetooth& getBluetooth() override { return bluetooth_; }
+    hal::ICompanionSource& getCompanionSource() override { return bluetooth_; }
 
     hal::Esp32Display& getEsp32Display() { return display_; }
     hal::Esp32Rtc& getEsp32Rtc() { return rtc_; }
