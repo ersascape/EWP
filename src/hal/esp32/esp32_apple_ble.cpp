@@ -101,6 +101,8 @@ public:
     uint8_t recoveryAttempts_{0};
     uint32_t recoveryAt_{0};
     uint32_t requestedAt_{0};
+    bool requestTraceLogged_{false};
+    bool responseTraceLogged_{false};
     protocols::AncsAttributes attributes_;
     protocols::AmsMedia media_;
     uint32_t supportedCommands_{0};
@@ -174,9 +176,6 @@ public:
     void handleNotification(const uint8_t* data, size_t size) {
         if (size != 8 || data[0] > 2) return;
         const uint32_t uid = protocols::readLe32(data + 4);
-        DebugLog::log("ANCS: notification event=%u flags=0x%02x category=%u uid=%08lx",
-                      unsigned(data[0]), unsigned(data[1]), unsigned(data[2]),
-                      static_cast<unsigned long>(uid));
         if (data[0] == 2) {
             for (auto& target : dismissTargets_) if (target.uid == uid) target = {};
             if (waiting_ && active_.uid == uid) active_.removed = true;
@@ -188,6 +187,9 @@ public:
             return;
         }
         const bool incoming = data[2] == 1;
+        if (incoming)
+            DebugLog::log("ANCS: incoming-call event=%u flags=0x%02x uid=%08lx",
+                          unsigned(data[0]), unsigned(data[1]), static_cast<unsigned long>(uid));
         for (auto& target : dismissTargets_) if (target.uid == uid) target.allowed = false;
         if (incoming) {
             const bool fresh = !call_.ringing || call_.uid != uid;
@@ -199,16 +201,8 @@ public:
         for (size_t i = 0; i < pendingCount_; ++i) {
             if (pending_[i].uid == uid) {
                 pending_[i] = {uid, incoming, false, data[1]};
-                DebugLog::log("ANCS: coalesced uid=%08lx pending=%u blocked=%u control=%u",
-                              static_cast<unsigned long>(uid), unsigned(pendingCount_),
-                              unsigned(attributesBlocked_), unsigned(control_ != nullptr));
                 return;
             }
-        }
-        if (attributesBlocked_) {
-            DebugLog::log("ANCS: not requesting uid=%08lx; attribute recovery is blocking requests",
-                          static_cast<unsigned long>(uid));
-            return;
         }
         if (pendingCount_ == 16) {
             if (incoming) --pendingCount_;
@@ -225,9 +219,25 @@ public:
             pending_[0] = {uid, true, false, data[1]};
             ++pendingCount_;
         } else pending_[pendingCount_++] = {uid, false, false, data[1]};
-        DebugLog::log("ANCS: queued attributes uid=%08lx call=%u pending=%u blocked=%u control=%u",
-                      static_cast<unsigned long>(uid), unsigned(incoming), unsigned(pendingCount_),
-                      unsigned(attributesBlocked_), unsigned(control_ != nullptr));
+    }
+
+    void requeueActiveRequest() {
+        if (active_.removed) return;
+        for (size_t i = 0; i < pendingCount_; ++i)
+            if (pending_[i].uid == active_.uid) return;
+        if (pendingCount_ == 16) {
+            size_t drop = pendingCount_;
+            while (drop > 0) {
+                --drop;
+                if (!pending_[drop].call) break;
+            }
+            if (pending_[drop].call) return;
+            for (size_t i = drop + 1; i < pendingCount_; ++i) pending_[i - 1] = pending_[i];
+            --pendingCount_;
+        }
+        for (size_t i = pendingCount_; i > 0; --i) pending_[i] = pending_[i - 1];
+        pending_[0] = active_;
+        ++pendingCount_;
     }
 
     void requestNext() {
@@ -243,11 +253,11 @@ public:
             attributes_.begin(active_.uid, requestNegativeLabel);
             waiting_ = true;
             requestedAt_ = millis();
-            DebugLog::log("ANCS: writing attribute request uid=%08lx negative_label=%u",
-                          static_cast<unsigned long>(active_.uid), unsigned(requestNegativeLabel));
+            if (!requestTraceLogged_) {
+                DebugLog::log("ANCS: notification attribute requests active");
+                requestTraceLogged_ = true;
+            }
             control_->writeValue(cmd, requestNegativeLabel ? 14 : 11, true);
-            DebugLog::log("ANCS: attribute request write complete uid=%08lx",
-                          static_cast<unsigned long>(active_.uid));
             break;
         }
     }
@@ -255,8 +265,6 @@ public:
     void handleAttributes(const uint8_t* data, size_t size) {
         if (!waiting_) return;
         const auto result = attributes_.feed(data, size);
-        DebugLog::log("ANCS: data-source fragment uid=%08lx bytes=%u result=%u",
-                      static_cast<unsigned long>(active_.uid), unsigned(size), unsigned(result));
         if (result == protocols::AncsAttributes::Result::Invalid) {
             // A missing fragment cannot be resynchronized by guessing a header.
             overflow_ = true;
@@ -265,9 +273,11 @@ public:
         if (result != protocols::AncsAttributes::Result::Complete) return;
         waiting_ = false;
         if (active_.removed || !live()) return;
-        DebugLog::log("ANCS: attributes complete call=%u title_len=%u message_len=%u",
-                      unsigned(active_.call), unsigned(strlen(attributes_.title)),
-                      unsigned(strlen(attributes_.message)));
+        recoveryAttempts_ = 0;
+        if (!responseTraceLogged_) {
+            DebugLog::log("ANCS: notification attributes received");
+            responseTraceLogged_ = true;
+        }
         if (active_.call) {
             if (call_.ringing && call_.uid == active_.uid && callCb_) {
                 const bool messageIsNumber = isPhoneNumberText(attributes_.message);
@@ -444,7 +454,7 @@ public:
         ++ancsEpoch_;
         source_->registerForNotify(nullptr);
         data_->registerForNotify(nullptr);
-        waiting_ = false; pendingCount_ = 0;
+        waiting_ = false;
         xQueueReset(sourceQueue_); xQueueReset(callQueue_);
         if (call_.ringing && callCb_) callCb_(BleCallAction::Ended, "", "", callUserData_);
         call_ = {};
@@ -465,6 +475,7 @@ public:
         for (auto& target : dismissTargets_) target = {};
         attributesBlocked_ = false; recoveryAttempts_ = 0;
         ++ancsEpoch_; droppedHistory_ = 0; droppedOther_ = 0;
+        requestTraceLogged_ = false; responseTraceLogged_ = false;
         xQueueReset(sourceQueue_); xQueueReset(callQueue_);
         call_ = {}; publishedCallUid_ = 0;
         media_ = {}; supportedCommands_ = 0; servicesChanged_ = false;
@@ -533,11 +544,18 @@ public:
                 if (other) DebugLog::log("BLE-Apple: dropped %lu queued updates", (unsigned long)other);
                 if (overflow_.exchange(false) || (waiting_ && uint32_t(millis() - requestedAt_) > 10000)) {
                     DebugLog::log("ANCS: attribute stream lost uid=%lu; recovering subscriptions, keeping BLE", (unsigned long)active_.uid);
-                    waiting_ = false; pendingCount_ = 0; attributesBlocked_ = true;
+                    requeueActiveRequest();
+                    waiting_ = false; attributesBlocked_ = true;
                     recoveryAt_ = millis();
                 }
-                if (attributesBlocked_ && recoveryAttempts_ < 3 && uint32_t(millis() - recoveryAt_) >= 2000) {
-                    ++recoveryAttempts_;
+                const uint8_t retryExponent = recoveryAttempts_ < 4 ? recoveryAttempts_ : 4;
+                const uint32_t retryDelayMs = 2000UL << retryExponent;
+                if (attributesBlocked_ && uint32_t(millis() - recoveryAt_) >= retryDelayMs) {
+                    if (recoveryAttempts_ < 5) ++recoveryAttempts_;
+                    recoveryAt_ = millis();
+                    DebugLog::log("ANCS: resubscription recovery attempt=%u next_backoff_ms=%lu",
+                                  unsigned(recoveryAttempts_),
+                                  static_cast<unsigned long>(retryDelayMs));
                     restartAncs();
                 }
                 if (servicesChanged_ && live()) {
