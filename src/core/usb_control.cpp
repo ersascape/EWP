@@ -258,6 +258,20 @@ bool otaPartitionBootable(const esp_partition_t* partition) {
     esp_ota_img_states_t state;
     if (esp_ota_get_state_partition(partition, &state) == ESP_OK &&
         (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED)) return false;
+    esp_image_header_t header{};
+    if (esp_partition_read(partition, 0, &header, sizeof(header)) != ESP_OK ||
+        header.magic != ESP_IMAGE_HEADER_MAGIC || header.segment_count == 0 ||
+        header.segment_count > ESP_IMAGE_MAX_SEGMENTS) return false;
+    size_t offset = sizeof(header);
+    for (uint8_t i = 0; i < header.segment_count; ++i) {
+        if (offset > partition->size || sizeof(esp_image_segment_header_t) > partition->size - offset)
+            return false;
+        esp_image_segment_header_t segment{};
+        if (esp_partition_read(partition, offset, &segment, sizeof(segment)) != ESP_OK ||
+            segment.data_len == 0 || segment.data_len > partition->size - offset - sizeof(segment))
+            return false;
+        offset += sizeof(segment) + segment.data_len;
+    }
     const esp_partition_pos_t position{partition->address, partition->size};
     esp_image_metadata_t metadata{};
     return esp_image_verify(ESP_IMAGE_VERIFY, &position, &metadata) == ESP_OK;

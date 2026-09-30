@@ -18,8 +18,6 @@ public:
     Result<void> init() override;
     void startAdvertising() override;
     void stopAdvertising() override;
-    bool suspendForMaintenance() override;
-    void resumeAfterMaintenance() override;
     bool isConnected() const override;
     bool isAdvertising() const override;
     uint32_t nextWakeDelayMs(uint32_t nowMs) const override;
@@ -28,6 +26,10 @@ public:
     const char* getDeviceAddress() const override;
 
     const char* sourceId() const override;
+    bool pauseForMaintenance() override;
+    void resumeFromMaintenance() override;
+    bool suspendForMaintenance() override;
+    void resumeAfterMaintenance() override;
     bool isAvailable() const override;
     CompanionCapabilities capabilities() const override;
     void setCallCallback(CompanionCallCallback cb, void* userData) override;

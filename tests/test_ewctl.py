@@ -15,6 +15,12 @@ SPEC.loader.exec_module(ewctl)
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_uptime_formatting(self):
+        self.assertEqual(ewctl.format_uptime(7), "7s")
+        self.assertEqual(ewctl.format_uptime(125), "2m 05s")
+        self.assertEqual(ewctl.format_uptime(3600 + 4 * 60), "1h 04m")
+        self.assertEqual(ewctl.format_uptime(2 * 86400 + 3 * 3600), "2d 3h")
+
     def test_request_is_versioned_and_newline_terminated(self):
         frame = ewctl.encode_request(7, "battery.read", {"fresh": True})
         self.assertTrue(frame.endswith(b"\n"))

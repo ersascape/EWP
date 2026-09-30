@@ -442,28 +442,33 @@ bool Esp32Bluetooth::suspendForMaintenance() {
             return false;
         }
     }
-    Impl* old = pImpl_;
-    if (Impl::current() == old) Impl::current() = nullptr;
-    pImpl_ = nullptr;
-    delete old; // Stops and joins the Apple GATT worker; releases its queues.
-    // Keep controller memory reserved: this Arduino BLE version does not clear
-    // its initialized flag when release_memory=true, which prevents re-init.
-    BLEDevice::deinit(false);
-    DebugLog::log("BLE: fully suspended for OTA maintenance");
+    // Keep the NimBLE/Bludroid host and GATT server alive. Deinitializing and
+    // rebuilding Arduino BLE invalidates library-owned client/service objects;
+    // reconnecting during OTA check used to panic in descriptor cleanup.
+    DebugLog::log("BLE: suspended for OTA maintenance; host retained");
     return true;
+}
+
+bool Esp32Bluetooth::pauseForMaintenance() {
+    if (!pImpl_) return true;
+    if (!pImpl_->appleClient_.suspendForMaintenance(5000)) {
+        DebugLog::log("BLE source: maintenance pause failed; protocol worker did not stop");
+        return false;
+    }
+    DebugLog::log("BLE source: protocol worker resources released for maintenance");
+    return true;
+}
+
+void Esp32Bluetooth::resumeFromMaintenance() {
+    // The next authenticated peer connection recreates source queues and its
+    // worker. No protocol-specific discovery is restarted here.
 }
 
 void Esp32Bluetooth::resumeAfterMaintenance() {
     if (!maintenanceSuspended_) return;
     maintenanceSuspended_ = false;
-    Result<void> result = init();
-    if (!result.isOk()) {
-        maintenanceSuspended_ = true;
-        DebugLog::log("BLE: resume after maintenance failed");
-        return;
-    }
     startAdvertising();
-    DebugLog::log("BLE: resumed after OTA maintenance");
+    DebugLog::log("BLE: advertising resumed after OTA maintenance");
 }
 
 bool Esp32Bluetooth::isAdvertising() const { return pImpl_ && pImpl_->advertising_; }

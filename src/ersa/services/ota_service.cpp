@@ -207,11 +207,23 @@ bool isBootable(const esp_partition_t* partition) {
     esp_ota_img_states_t state;
     if (esp_ota_get_state_partition(partition, &state) == ESP_OK &&
         (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED)) return false;
-    // Avoid asking esp_image_verify() to parse an erased OTA slot. Besides
-    // being guaranteed unbootable, that emits an alarming invalid-magic log.
-    uint8_t magic = 0;
-    if (esp_partition_read(partition, 0, &magic, sizeof(magic)) != ESP_OK ||
-        magic != ESP_IMAGE_HEADER_MAGIC) return false;
+    // Validate segment extents before the IDF verifier: a failed prior OTA can
+    // leave an E9 header with erased 0xFFFFFFFF segment lengths, which makes
+    // esp_image_verify() log an alarming parser error on every UI redraw.
+    esp_image_header_t header{};
+    if (esp_partition_read(partition, 0, &header, sizeof(header)) != ESP_OK ||
+        header.magic != ESP_IMAGE_HEADER_MAGIC || header.segment_count == 0 ||
+        header.segment_count > ESP_IMAGE_MAX_SEGMENTS) return false;
+    size_t offset = sizeof(header);
+    for (uint8_t i = 0; i < header.segment_count; ++i) {
+        if (offset > partition->size || sizeof(esp_image_segment_header_t) > partition->size - offset)
+            return false;
+        esp_image_segment_header_t segment{};
+        if (esp_partition_read(partition, offset, &segment, sizeof(segment)) != ESP_OK ||
+            segment.data_len == 0 || segment.data_len > partition->size - offset - sizeof(segment))
+            return false;
+        offset += sizeof(segment) + segment.data_len;
+    }
     const esp_partition_pos_t position{partition->address, partition->size};
     esp_image_metadata_t metadata{};
     return esp_image_verify(ESP_IMAGE_VERIFY, &position, &metadata) == ESP_OK;
@@ -292,10 +304,28 @@ bool OtaService::installUpdate() {
     return true;
 }
 
+void OtaService::resumeAfterCheck() {
+    const UpdateState state = updateState_.load();
+    if (updateTaskActive_.load() || state == UpdateState::Checking || state == UpdateState::Installing) {
+        resumeComponentsRequested_.store(true);
+        return;
+    }
+    auto& board = board::Board::current();
+    board.getCompanionSource().resumeFromMaintenance();
+    board.getBluetooth().resumeAfterMaintenance();
+}
+
 void OtaService::updateTask(void* context) {
     auto* self = static_cast<OtaService*>(context);
     const bool install = self->updateState_.load() == UpdateState::Installing;
+    self->updateTaskActive_.store(true);
     self->runUpdate(install);
+    self->updateTaskActive_.store(false);
+    if (self->resumeComponentsRequested_.exchange(false)) {
+        auto& board = board::Board::current();
+        board.getCompanionSource().resumeFromMaintenance();
+        board.getBluetooth().resumeAfterMaintenance();
+    }
     vTaskDelete(nullptr);
 }
 
@@ -306,15 +336,34 @@ void OtaService::runUpdate(bool install) {
         DebugLog::log("OTA: cannot suspend BLE for maintenance");
         return;
     }
-    struct ResumeBluetooth {
+    auto& source = board::Board::current().getCompanionSource();
+    if (!source.pauseForMaintenance()) {
+        source.resumeFromMaintenance();
+        bluetooth.resumeAfterMaintenance();
+        updateState_.store(UpdateState::Failed);
+        DebugLog::log("OTA: companion source could not pause for maintenance");
+        return;
+    }
+    bool keepCommunicationPaused = false;
+    struct ResumeComponents {
         hal::IBluetooth& bluetooth;
-        ~ResumeBluetooth() { bluetooth.resumeAfterMaintenance(); }
-    } resumeBluetooth{bluetooth};
+        hal::ICompanionSource& source;
+        bool& keepPaused;
+        std::atomic<bool>& resumeRequested;
+        ~ResumeComponents() {
+            if (!keepPaused || resumeRequested.exchange(false)) {
+                source.resumeFromMaintenance();
+                bluetooth.resumeAfterMaintenance();
+            }
+        }
+    } resumeComponents{bluetooth, source, keepCommunicationPaused, resumeComponentsRequested_};
 
     DebugLog::log("OTA: BLE suspended; heap=%u largest=%u",
                   unsigned(ESP.getFreeHeap()),
                   unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 20 * 1024 ||
+    // With the flash-resident certificate bundle, OTA can proceed with a
+    // smaller contiguous block than the old PEM-based TLS path required.
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 12 * 1024 ||
         ESP.getFreeHeap() < 45000) {
         updateState_.store(UpdateState::Failed);
         DebugLog::log("OTA: update stopped; insufficient free heap");
@@ -338,15 +387,18 @@ void OtaService::runUpdate(bool install) {
     const esp_app_desc_t* current = esp_ota_get_app_description();
     const bool remoteNewer = current && isRemoteNewer(manifest.version, current->version);
     if (!install) {
-        updateState_.store(remoteNewer ? UpdateState::Available : UpdateState::UpToDate);
         DebugLog::log("OTA: manifest current=%s available=%s size=%lu sha256=%s", current ? current->version : "unknown",
                       manifest.version, static_cast<unsigned long>(manifest.size), manifest.sha256);
         disconnectWifi();
+        // Keep the radio off between "Update available" and Install. Restarting
+        // BLE here fragments the heap again before the next button action.
+        keepCommunicationPaused = remoteNewer;
+        updateState_.store(remoteNewer ? UpdateState::Available : UpdateState::UpToDate);
         return;
     }
     if (!remoteNewer) {
-        updateState_.store(UpdateState::UpToDate);
         disconnectWifi();
+        updateState_.store(UpdateState::UpToDate);
         return;
     }
 

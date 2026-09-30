@@ -68,9 +68,9 @@ public:
     // Notification Source emits an initial burst of 8-byte records. Keep these
     // separate from fragmented responses: losing history must not poison ANCS.
     struct SourcePacket { uint32_t session; uint32_t epoch; uint8_t data[8]; };
-    QueueHandle_t sourceQueue_{xQueueCreate(64, sizeof(SourcePacket))};
-    QueueHandle_t callQueue_{xQueueCreate(8, sizeof(SourcePacket))};
-    QueueHandle_t queue_{xQueueCreate(24, sizeof(Packet))};
+    QueueHandle_t sourceQueue_{nullptr};
+    QueueHandle_t callQueue_{nullptr};
+    QueueHandle_t queue_{nullptr};
     std::atomic<uint32_t> ancsEpoch_{0}, droppedHistory_{0}, droppedOther_{0};
     TaskHandle_t task_{nullptr};
     portMUX_TYPE controlMux_ = portMUX_INITIALIZER_UNLOCKED;
@@ -79,7 +79,7 @@ public:
     std::atomic<uint32_t> generation_{0};
     std::atomic<uint32_t> authenticatedGeneration_{UINT32_MAX};
     bool wanted_{false}; // protected by controlMux_
-    std::atomic<bool> shutdown_{false}, exited_{false};
+    std::atomic<bool> shutdown_{false}, maintenanceStop_{false}, exited_{false};
     std::atomic<bool> ancsReady_{false}, amsReady_{false}, ctsReady_{false}, overflow_{false};
     std::atomic<uint32_t> publishedCallUid_{0};
     uint32_t session_{0};
@@ -116,13 +116,34 @@ public:
 
     bool live() const { return !shutdown_ && session_ == generation_.load(); }
 
+    bool createQueues() {
+        if (queue_ && sourceQueue_ && callQueue_) return true;
+        queue_ = xQueueCreate(24, sizeof(Packet));
+        sourceQueue_ = xQueueCreate(64, sizeof(SourcePacket));
+        callQueue_ = xQueueCreate(8, sizeof(SourcePacket));
+        if (queue_ && sourceQueue_ && callQueue_) return true;
+        if (queue_) vQueueDelete(queue_);
+        if (sourceQueue_) vQueueDelete(sourceQueue_);
+        if (callQueue_) vQueueDelete(callQueue_);
+        queue_ = nullptr; sourceQueue_ = nullptr; callQueue_ = nullptr;
+        return false;
+    }
+
+    void deleteQueues() {
+        if (queue_) vQueueDelete(queue_);
+        if (sourceQueue_) vQueueDelete(sourceQueue_);
+        if (callQueue_) vQueueDelete(callQueue_);
+        queue_ = nullptr; sourceQueue_ = nullptr; callQueue_ = nullptr;
+    }
+
     void notifyWorker() {
         if (task_) xTaskNotifyGive(task_);
     }
 
     bool hasQueuedWork() const {
-        return uxQueueMessagesWaiting(queue_) || uxQueueMessagesWaiting(sourceQueue_) ||
-               uxQueueMessagesWaiting(callQueue_) || overflow_.load();
+        return (queue_ && uxQueueMessagesWaiting(queue_)) ||
+               (sourceQueue_ && uxQueueMessagesWaiting(sourceQueue_)) ||
+               (callQueue_ && uxQueueMessagesWaiting(callQueue_)) || overflow_.load();
     }
 
     TickType_t nextWorkerWake() const {
@@ -199,12 +220,27 @@ public:
         authenticatedGeneration_ = UINT32_MAX;
         ancsReady_ = false; amsReady_ = false;
         portEXIT_CRITICAL(&controlMux_);
+        if (address) maintenanceStop_ = false;
         notifyWorker();
         // No waits or GATT operations on the Bluetooth callback thread.
-        if (address && !task_ && queue_ && sourceQueue_ && callQueue_) {
+        if (address && !task_ && createQueues()) {
+            exited_ = false;
             if (xTaskCreate(taskEntry, "apple_ble", 6144, this, 3, &task_) != pdPASS)
-                DebugLog::log("BLE-Apple: Cannot start worker");
+                { task_ = nullptr; deleteQueues(); DebugLog::log("BLE-Apple: Cannot start worker"); }
         }
+    }
+
+    bool suspendForMaintenance(uint32_t timeoutMs) {
+        maintenanceStop_ = true;
+        changePeer(nullptr, BLE_ADDR_TYPE_RANDOM);
+        const uint32_t started = millis();
+        while (task_ && !exited_ && uint32_t(millis() - started) < timeoutMs)
+            vTaskDelay(pdMS_TO_TICKS(20));
+        if (task_ && !exited_) return false;
+        task_ = nullptr;
+        deleteQueues();
+        DebugLog::log("BLE-Apple: worker and queues released for maintenance");
+        return true;
     }
 
     void handleNotification(const uint8_t* data, size_t size) {
@@ -525,8 +561,8 @@ public:
     static void taskEntry(void* value) { static_cast<Impl*>(value)->run(); }
     void run() {
         DebugLog::log("BLE-Apple: burst-safe worker started (separate history/call queues)");
-        client_ = BLEDevice::createClient();
-        while (!shutdown_) {
+        if (!client_) client_ = BLEDevice::createClient();
+        while (!shutdown_ && !maintenanceStop_) {
             esp_bd_addr_t peer;
             esp_ble_addr_type_t type;
             portENTER_CRITICAL(&controlMux_);
@@ -628,6 +664,7 @@ public:
             while (client_->isConnected()) vTaskDelay(pdMS_TO_TICKS(50));
             vTaskDelay(pdMS_TO_TICKS(100));
         }
+        task_ = nullptr;
         exited_ = true;
         vTaskDelete(nullptr);
     }
@@ -654,9 +691,7 @@ Esp32AppleClient::~Esp32AppleClient() {
     pImpl_->shutdown_ = true;
     pImpl_->notifyWorker();
     while (pImpl_->task_ && !pImpl_->exited_) vTaskDelay(pdMS_TO_TICKS(50));
-    if (pImpl_->queue_) vQueueDelete(pImpl_->queue_);
-    if (pImpl_->sourceQueue_) vQueueDelete(pImpl_->sourceQueue_);
-    if (pImpl_->callQueue_) vQueueDelete(pImpl_->callQueue_);
+    pImpl_->deleteQueues();
     delete pImpl_;
 }
 void Esp32AppleClient::setCallCallback(CompanionCallCallback cb, void* user) { pImpl_->callCb_ = cb; pImpl_->callUserData_ = user; }
@@ -671,6 +706,9 @@ void Esp32AppleClient::authenticationComplete(bool success) {
     pImpl_->notifyWorker();
 }
 void Esp32AppleClient::stop() { pImpl_->changePeer(nullptr, BLE_ADDR_TYPE_RANDOM); }
+bool Esp32AppleClient::suspendForMaintenance(uint32_t timeoutMs) {
+    return pImpl_->suspendForMaintenance(timeoutMs);
+}
 bool Esp32AppleClient::isAncsActive() const { return pImpl_->ancsReady_; }
 bool Esp32AppleClient::isAmsActive() const { return pImpl_->amsReady_; }
 bool Esp32AppleClient::isCtsActive() const { return pImpl_->ctsReady_; }

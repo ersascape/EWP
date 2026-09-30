@@ -40,6 +40,11 @@ public:
     // and UI labels; returned storage must remain valid for the source lifetime.
     virtual const char* sourceId() const = 0;
     virtual Result<void> initSource() { return Result<void>(); }
+    // Release source-owned transient resources before memory-intensive work.
+    // Providers may stop workers, queues, or protocol sessions without
+    // requiring the transport or OTA service to know their implementation.
+    virtual bool pauseForMaintenance() { return true; }
+    virtual void resumeFromMaintenance() {}
     // Called regularly from the application task; asynchronous sources can
     // leave this empty. It must not busy-wait.
     virtual void tickSource() {}

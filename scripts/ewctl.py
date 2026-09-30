@@ -277,6 +277,20 @@ def print_json(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2), flush=True)
 
 
+def format_uptime(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
 def display_reply(reply: dict, title: str, json_output: bool = False) -> None:
     if json_output:
         print_json(reply)
@@ -302,6 +316,8 @@ def display_reply(reply: dict, title: str, json_output: bool = False) -> None:
     table.add_column("Value", overflow="fold")
     if isinstance(data, dict):
         for key, value in data.items():
+            if title == "status" and key == "uptime_seconds":
+                key, value = "uptime", format_uptime(value)
             rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
             table.add_row(key.replace("_", " "), rendered)
     else:

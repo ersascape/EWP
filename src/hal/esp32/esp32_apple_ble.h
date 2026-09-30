@@ -22,6 +22,7 @@ public:
     void startDiscovery(const esp_bd_addr_t bda, esp_ble_addr_type_t addrType = BLE_ADDR_TYPE_RANDOM);
     void authenticationComplete(bool success);
     void stop();
+    bool suspendForMaintenance(uint32_t timeoutMs);
 
     bool isAncsActive() const;
     bool isAmsActive() const;
@@ -56,6 +57,7 @@ public:
     void startDiscovery(const uint8_t*, uint8_t = 0) {}
     void authenticationComplete(bool) {}
     void stop() {}
+    bool suspendForMaintenance(uint32_t) { return true; }
     bool isAncsActive() const { return false; }
     bool isAmsActive() const { return false; }
     bool isCtsActive() const { return false; }

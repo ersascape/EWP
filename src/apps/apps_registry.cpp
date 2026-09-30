@@ -114,6 +114,7 @@ public:
     void onEvent(const events::Event& event) override {
         const auto legacy = toLegacyButtonEvent(event);
         if (legacy == Buttons::Event::Home) {
+            service().resumeAfterCheck();
             ApplicationManager::instance().switchTo("app_drawer");
         } else if (legacy == Buttons::Event::Action) {
             if (service().updateState() == ersa::services::OtaService::UpdateState::Available)

@@ -1,5 +1,20 @@
 # Changelog
 
+## ewp-0.1.5
+
+- Keep BLE suspended between a successful OTA check and installation to avoid
+  reconnect heap fragmentation; leaving the updater resumes Bluetooth.
+- Add a source-level maintenance pause/resume contract so OTA coordinates
+  companion providers generically rather than knowing about Apple protocols.
+- Lower OTA's contiguous-heap preflight for the flash-resident certificate-bundle
+  TLS path while keeping a total free-heap guard.
+- Reject malformed alternate-slot segment tables before invoking the ESP image
+  verifier, avoiding noisy errors for interrupted/invalid OTA contents.
+- Show current boot uptime on the watch's Status screen and format it in the
+  human-readable `ewctl status` output.
+
+See [release notes](release-notes/ewp-0.1.5.md) for details.
+
 ## ewp-0.1.4
 
 - Suspend and tear down the BLE service during OTA checks and installs, then

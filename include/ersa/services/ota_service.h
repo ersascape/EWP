@@ -20,6 +20,7 @@ public:
 
     bool checkForUpdate();
     bool installUpdate();
+    void resumeAfterCheck();
     UpdateState updateState() const { return updateState_.load(); }
     const char* updateVersion() const { return updateVersion_; }
     const char* updateMessage() const;
@@ -37,6 +38,8 @@ private:
     bool pendingConfirmation_{false};
     uint32_t confirmationStartedMs_{0};
     std::atomic<UpdateState> updateState_{UpdateState::Idle};
+    std::atomic<bool> updateTaskActive_{false};
+    std::atomic<bool> resumeComponentsRequested_{false};
     char updateVersion_[32]{};
 };
 
