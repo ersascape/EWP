@@ -168,8 +168,8 @@ def capture_raw_logs(port: str, baud: int, output: Optional[str]) -> int:
         device.port = port
         device.baudrate = baud
         device.timeout = 0.25
-        device.dtr = False
-        device.rts = False
+        # Match Session's pyserial defaults. Forcing these low during open can
+        # toggle USB modem-control lines on boards that wire them to reset.
         device.open()
         print(f"ewctl: capturing raw USB logs from {port}; press Ctrl-C to stop", file=sys.stderr)
         if output:

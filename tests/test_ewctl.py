@@ -102,11 +102,22 @@ class ProtocolTests(unittest.TestCase):
 
     def test_logs_raw_capture_options(self):
         parser = ewctl.build_parser()
+        follow = parser.parse_args(["logs", "--follow"])
+        self.assertTrue(follow.follow)
+        self.assertFalse(follow.raw)
         raw = parser.parse_args(["logs", "--raw"])
         self.assertTrue(raw.raw)
         self.assertIsNone(raw.output)
         output = parser.parse_args(["logs", "--output", "watch.log"])
         self.assertEqual(output.output, "watch.log")
+
+    def test_logs_follow_uses_raw_capture_without_bridge_requests(self):
+        with patch.object(ewctl, "find_port", return_value="/dev/test"), \
+             patch.object(ewctl, "Session", side_effect=AssertionError("control bridge selected")), \
+             patch.object(ewctl, "capture_raw_logs", return_value=0) as capture:
+            result = ewctl.main(["--port", "/dev/test", "logs", "--follow"])
+        self.assertEqual(result, 0)
+        capture.assert_called_once_with("/dev/test", ewctl.DEFAULT_BAUD, None)
 
     def test_debug_bundle_options_and_log_redaction(self):
         parser = ewctl.build_parser()
