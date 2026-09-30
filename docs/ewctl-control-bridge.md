@@ -6,7 +6,7 @@ Provide a small, scriptable USB control surface for inspecting and operating an 
 
 The first transport is the ESP32-C3 USB Serial/JTAG console. Keep the protocol transport-neutral so a later BLE or network transport can reuse command handling with a separate policy.
 
-`ewctl ota` reports the selected board's name, codename, manufacturer, running app slot, ESP-IDF image state, the other slot's bootability, update target, partition sizes, and whether rollback confirmation is pending. `ewctl ota boot-other` validates the alternate image, selects it through ESP-IDF OTA metadata, replies over USB, then reboots into it. The equivalent updater-screen shortcut is a B2 double-click. `ewctl status` includes name, codename, manufacturer, running slot, and a human-readable current boot uptime. `--json` retains the raw `uptime_seconds` field.
+`ewctl ota` reports the selected board's name, codename, manufacturer, running app slot, ESP-IDF image state, the other slot's bootability, update target, partition sizes, and whether rollback confirmation is pending. `ewctl ota boot-other` validates the alternate image, selects it through ESP-IDF OTA metadata, replies over USB, then reboots into it. The equivalent updater-screen shortcut is a B2 double-click. `ewctl status` includes compiled firmware version, name, codename, manufacturer, running slot, and a human-readable current boot uptime. `--json` retains the raw `version` and `uptime_seconds` fields.
 
 The host client lives at `scripts/ewctl.py` and uses Python, `pyserial`, and Rich (`python3 -m pip install -r requirements-ewctl.txt`). It renders readable Rich tables by default; pass `--json` for machine-readable output. Examples: `python3 scripts/ewctl.py status`, `python3 scripts/ewctl.py power cpu-freq-set 40`, `python3 scripts/ewctl.py poll status battery ble power --interval 5`, and `python3 scripts/ewctl.py logs --follow`. Follow mode streams the live USB console directly without sending `logs.read` requests; redirect it with `python3 scripts/ewctl.py logs --follow > watch.log` or use `logs --output watch.log`. Stop raw capture with Ctrl-C. Pass `--port /dev/ttyACM0` if auto-detection is ambiguous. The firmware endpoint is implemented in `src/core/usb_control.cpp`; the watch must run a build containing it.
 
@@ -86,7 +86,7 @@ Implemented commands:
 
 | Command | Result |
 | --- | --- |
-| `system.status` | Firmware/build identity, selected-board name/codename/manufacturer, running OTA slot, uptime, reset reason, active app, heap, USB session, power state |
+| `system.status` | Compiled firmware version/build identity, selected-board name/codename/manufacturer, running OTA slot, uptime, reset reason, active app, heap, USB session, power state |
 | `battery.read` | Latest voltage and estimated percentage, with sample age and validity |
 | `ble.status` | Link and advertising state, active companion source IDs, discovered capabilities |
 | `power.status` | CPU frequency/PM mode, sleep eligibility/block reason, active power locks |

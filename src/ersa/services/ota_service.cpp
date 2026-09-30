@@ -6,7 +6,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
-#include <esp_https_ota.h>
 #include <esp_image_format.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -14,6 +13,7 @@
 #include <esp_crt_bundle.h>
 #include <mbedtls/sha256.h>
 #include <cstring>
+#include <strings.h>
 #include <ctime>
 #include <cstdlib>
 
@@ -24,6 +24,9 @@ constexpr uint32_t BOOT_CONFIRM_DELAY_MS = 30000;
 constexpr char OTA_BASE_URL[] = "https://pkgs-wearables.ersa.dev";
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 constexpr size_t MANIFEST_LIMIT = 768;
+constexpr int OTA_RANGE_SIZE = 32 * 1024;
+constexpr unsigned OTA_RANGE_RETRIES = 4;
+constexpr uint32_t OTA_TRANSFER_TIMEOUT_MS = 10 * 60 * 1000;
 
 struct ManifestBuffer {
     char data[MANIFEST_LIMIT]{};
@@ -42,7 +45,10 @@ struct OtaManifest {
     size_t size{0};
 };
 
+esp_err_t logOtaHttpEvent(esp_http_client_event_t* event);
+
 esp_err_t collectManifest(esp_http_client_event_t* event) {
+    logOtaHttpEvent(event);
     auto* buffer = static_cast<ManifestBuffer*>(event->user_data);
     if (event->event_id != HTTP_EVENT_ON_DATA || !buffer) return ESP_OK;
     const size_t amount = static_cast<size_t>(event->data_len);
@@ -53,6 +59,58 @@ esp_err_t collectManifest(esp_http_client_event_t* event) {
     memcpy(buffer->data + buffer->length, event->data, amount);
     buffer->length += amount;
     buffer->data[buffer->length] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t logOtaHttpEvent(esp_http_client_event_t* event) {
+    if (!event) return ESP_OK;
+    switch (event->event_id) {
+        case HTTP_EVENT_ON_CONNECTED:
+            DebugLog::log("OTA: HTTPS connection established");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            if (event->header_key && strcmp(event->header_key, "Status") == 0)
+                DebugLog::log("OTA: HTTP response status=%s", event->header_value ? event->header_value : "?");
+            break;
+        case HTTP_EVENT_DISCONNECTED:
+            DebugLog::log("OTA: HTTPS range connection closed");
+            break;
+        case HTTP_EVENT_ERROR:
+            DebugLog::log("OTA: HTTP transport reported an error");
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
+struct RangeResponse {
+    uint32_t start{0};
+    uint32_t end{0};
+    uint32_t total{0};
+    bool contentRangeSeen{false};
+    bool contentRangeValid{false};
+};
+
+esp_err_t rangeHttpEvent(esp_http_client_event_t* event) {
+    logOtaHttpEvent(event);
+    if (event && event->event_id == HTTP_EVENT_ON_HEADER && event->header_key &&
+        strcasecmp(event->header_key, "Content-Range") == 0 && event->header_value) {
+        auto* response = static_cast<RangeResponse*>(event->user_data);
+        if (response) {
+            unsigned long start = 0, end = 0, total = 0;
+            response->contentRangeSeen = true;
+            response->contentRangeValid = sscanf(event->header_value, "bytes %lu-%lu/%lu",
+                                                  &start, &end, &total) == 3 &&
+                                           start <= UINT32_MAX && end <= UINT32_MAX &&
+                                           total <= UINT32_MAX && start <= end && end < total;
+            if (response->contentRangeValid) {
+                response->start = static_cast<uint32_t>(start);
+                response->end = static_cast<uint32_t>(end);
+                response->total = static_cast<uint32_t>(total);
+            }
+        }
+    }
     return ESP_OK;
 }
 
@@ -76,6 +134,7 @@ bool fetchManifest(OtaManifest& manifest) {
     char manifestUrl[192];
     snprintf(manifestUrl, sizeof(manifestUrl), "%s/ota/%s/ota.json", OTA_BASE_URL,
              identity.codename);
+    DebugLog::log("OTA: fetching manifest url=%s", manifestUrl);
     esp_http_client_config_t config{};
     config.url = manifestUrl;
     config.timeout_ms = 15000;
@@ -87,9 +146,13 @@ bool fetchManifest(OtaManifest& manifest) {
     config.user_data = &body;
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return false;
+    const uint32_t started = millis();
     const esp_err_t result = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    DebugLog::log("OTA: manifest response status=%d result=0x%x bytes=%u elapsed_ms=%lu",
+                  status, unsigned(result), unsigned(body.length),
+                  static_cast<unsigned long>(millis() - started));
     if (result != ESP_OK || status != 200 || body.overflow) {
         DebugLog::log("OTA: manifest request failed status=%d result=0x%x", status, unsigned(result));
         return false;
@@ -158,6 +221,127 @@ bool partitionMatchesManifest(const esp_partition_t* partition, size_t imageSize
     }
     actual[64] = '\0';
     return strcmp(actual, expectedSha256) == 0;
+}
+
+bool downloadFirmware(esp_http_client_handle_t client, esp_ota_handle_t otaHandle,
+                      const OtaManifest& manifest, size_t& written) {
+    RangeResponse response;
+    uint8_t buffer[2048];
+    constexpr size_t APP_DESC_OFFSET = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+    constexpr size_t APP_DESC_END = APP_DESC_OFFSET + sizeof(esp_app_desc_t);
+    uint8_t metadata[APP_DESC_END]{};
+    bool metadataChecked = false;
+    unsigned retriesWithoutProgress = 0;
+    const uint32_t started = millis();
+    uint32_t lastProgressAt = started;
+    size_t lastProgress = 0;
+
+    while (written < manifest.size) {
+        if (uint32_t(millis() - started) >= OTA_TRANSFER_TIMEOUT_MS) {
+            DebugLog::log("OTA: transfer deadline exceeded at byte=%u", unsigned(written));
+            return false;
+        }
+        const size_t requestStart = written;
+        const size_t requestEnd = requestStart + OTA_RANGE_SIZE < manifest.size
+                                      ? requestStart + OTA_RANGE_SIZE - 1
+                                      : manifest.size - 1;
+        char range[56];
+        snprintf(range, sizeof(range), "bytes=%u-%u", unsigned(requestStart), unsigned(requestEnd));
+        response = {};
+        esp_err_t requestResult = esp_http_client_set_header(client, "Range", range);
+        DebugLog::log("OTA: requesting bytes=%u-%u attempt=%u", unsigned(requestStart),
+                      unsigned(requestEnd), retriesWithoutProgress + 1);
+
+        if (requestResult == ESP_OK) requestResult = esp_http_client_open(client, 0);
+        int contentLength = -1;
+        if (requestResult == ESP_OK) {
+            contentLength = esp_http_client_fetch_headers(client);
+            const int status = esp_http_client_get_status_code(client);
+            const size_t expectedLength = requestEnd - requestStart + 1;
+            if (status == 0 || contentLength < 0) {
+                requestResult = ESP_FAIL;
+            } else if (status != 206 || !response.contentRangeSeen || !response.contentRangeValid ||
+                       response.start != requestStart || response.end != requestEnd ||
+                       response.total != manifest.size || contentLength != static_cast<int>(expectedLength)) {
+                DebugLog::log("OTA: invalid range response status=%d content_length=%d range=%u-%u/%u expected=%u-%u/%u",
+                              status, contentLength, unsigned(response.start), unsigned(response.end),
+                              unsigned(response.total), unsigned(requestStart), unsigned(requestEnd),
+                              unsigned(manifest.size));
+                esp_http_client_close(client);
+                return false;
+            } else requestResult = ESP_OK;
+
+            while (requestResult == ESP_OK && written <= requestEnd) {
+                const int amount = esp_http_client_read(client, reinterpret_cast<char*>(buffer), sizeof(buffer));
+                if (amount <= 0) {
+                    requestResult = amount == 0 ? ESP_ERR_HTTP_EAGAIN : ESP_FAIL;
+                    break;
+                }
+                const size_t chunkSize = static_cast<size_t>(amount);
+                if (written + chunkSize > requestEnd + 1) {
+                    DebugLog::log("OTA: server exceeded requested range at byte=%u", unsigned(written));
+                    esp_http_client_close(client);
+                    return false;
+                }
+                if (!metadataChecked && written < APP_DESC_END) {
+                    const size_t copyStart = written;
+                    const size_t copyEnd = copyStart + chunkSize < APP_DESC_END
+                                               ? copyStart + chunkSize : APP_DESC_END;
+                    memcpy(metadata + copyStart, buffer, copyEnd - copyStart);
+                    if (copyEnd == APP_DESC_END) {
+                        esp_app_desc_t remote{};
+                        memcpy(&remote, metadata + APP_DESC_OFFSET, sizeof(remote));
+                        metadataChecked = true;
+                        if (strcmp(remote.version, manifest.version) != 0) {
+                            DebugLog::log("OTA: image version mismatch manifest=%s image=%s",
+                                          manifest.version, remote.version);
+                            esp_http_client_close(client);
+                            return false;
+                        }
+                        DebugLog::log("OTA: image metadata version=%s", remote.version);
+                    }
+                }
+                const esp_err_t writeResult = esp_ota_write(otaHandle, buffer, chunkSize);
+                if (writeResult != ESP_OK) {
+                    DebugLog::log("OTA: flash write failed byte=%u status=0x%x",
+                                  unsigned(written), unsigned(writeResult));
+                    esp_http_client_close(client);
+                    return false;
+                }
+                written += chunkSize;
+                if (written - lastProgress >= OTA_RANGE_SIZE ||
+                    uint32_t(millis() - lastProgressAt) >= 10000) {
+                    DebugLog::log("OTA: transfer progress bytes=%u/%u elapsed_ms=%lu heap=%lu largest=%lu",
+                                  unsigned(written), unsigned(manifest.size),
+                                  static_cast<unsigned long>(millis() - started),
+                                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+                    lastProgress = written;
+                    lastProgressAt = millis();
+                }
+            }
+        }
+        const int requestErrno = esp_http_client_get_errno(client);
+        esp_http_client_close(client);
+        if (written == requestEnd + 1) {
+            retriesWithoutProgress = 0;
+            continue;
+        }
+
+        if (written > requestStart) retriesWithoutProgress = 0;
+        else ++retriesWithoutProgress;
+        DebugLog::log("OTA: range interrupted byte=%u result=0x%x errno=%d retry=%u/%u",
+                      unsigned(written), unsigned(requestResult), requestErrno,
+                      retriesWithoutProgress, OTA_RANGE_RETRIES);
+        if (retriesWithoutProgress >= OTA_RANGE_RETRIES) {
+            DebugLog::log("OTA: range retry limit reached at byte=%u", unsigned(written));
+            return false;
+        }
+        const unsigned backoffStep = retriesWithoutProgress ? retriesWithoutProgress - 1 : 0;
+        const uint32_t backoffMs = 500U << (backoffStep > 2 ? 2 : backoffStep);
+        vTaskDelay(pdMS_TO_TICKS(backoffMs));
+    }
+    return metadataChecked && written == manifest.size;
 }
 
 bool parseVersion(const char* value, uint32_t& major, uint32_t& minor, uint32_t& patch) {
@@ -232,12 +416,20 @@ bool isBootable(const esp_partition_t* partition) {
 bool connectWifi() {
     const auto& config = WatchConfig::get();
     if (!config.wifiSsid[0]) return false;
+    DebugLog::log("OTA: starting Wi-Fi association timeout_ms=%lu", static_cast<unsigned long>(WIFI_CONNECT_TIMEOUT_MS));
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(true); // Required for ESP32-C3 Wi-Fi/BLE coexistence.
     WiFi.begin(config.wifiSsid, config.wifiPass);
     const uint32_t started = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - started < WIFI_CONNECT_TIMEOUT_MS)
+    uint32_t lastReport = started;
+    while (WiFi.status() != WL_CONNECTED && millis() - started < WIFI_CONNECT_TIMEOUT_MS) {
         vTaskDelay(pdMS_TO_TICKS(200));
+        if (uint32_t(millis() - lastReport) >= 4000) {
+            DebugLog::log("OTA: waiting for Wi-Fi status=%d elapsed_ms=%lu",
+                          int(WiFi.status()), static_cast<unsigned long>(millis() - started));
+            lastReport = millis();
+        }
+    }
     DebugLog::log("OTA: Wi-Fi status=%d heap=%lu largest=%lu", int(WiFi.status()),
                   static_cast<unsigned long>(ESP.getFreeHeap()),
                   static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
@@ -376,6 +568,9 @@ void OtaService::runUpdate(bool install) {
         return;
     }
 
+    DebugLog::log("OTA: Wi-Fi ready; starting manifest request heap=%lu largest=%lu",
+                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
     OtaManifest manifest;
     if (!fetchManifest(manifest)) {
         updateState_.store(UpdateState::Failed);
@@ -404,43 +599,51 @@ void OtaService::runUpdate(bool install) {
 
     esp_http_client_config_t httpConfig{};
     httpConfig.url = manifest.firmwareUrl;
-    httpConfig.timeout_ms = 20000;
+    httpConfig.timeout_ms = 30000;
     httpConfig.buffer_size = 1024;
     httpConfig.buffer_size_tx = 512;
     httpConfig.crt_bundle_attach = esp_crt_bundle_attach;
-    esp_https_ota_config_t otaConfig{};
-    otaConfig.http_config = &httpConfig;
-    otaConfig.partial_http_download = true;
-    otaConfig.max_http_request_size = 4096;
-
-    esp_https_ota_handle_t handle = nullptr;
-    esp_err_t result = esp_https_ota_begin(&otaConfig, &handle);
-    esp_app_desc_t remote{};
-    if (result == ESP_OK) result = esp_https_ota_get_img_desc(handle, &remote);
-    if (result != ESP_OK || strcmp(remote.version, manifest.version) != 0) {
-        if (handle) esp_https_ota_abort(handle);
-        updateState_.store(UpdateState::Failed);
-        DebugLog::log("OTA: image metadata mismatch or download failed status=0x%x", unsigned(result));
-        disconnectWifi();
-        return;
-    }
-
-    do {
-        result = esp_https_ota_perform(handle);
-        vTaskDelay(1);
-    } while (result == ESP_ERR_HTTPS_OTA_IN_PROGRESS);
-    const int imageLength = esp_https_ota_get_image_len_read(handle);
+    httpConfig.event_handler = rangeHttpEvent;
+    RangeResponse rangeResponse;
+    httpConfig.user_data = &rangeResponse;
+    DebugLog::log("OTA: preparing resumable ranged transfer range=%d timeout_ms=%d heap=%lu largest=%lu",
+                  OTA_RANGE_SIZE, httpConfig.timeout_ms,
+                  static_cast<unsigned long>(ESP.getFreeHeap()),
+                  static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    esp_http_client_handle_t client = esp_http_client_init(&httpConfig);
     const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
-    if (result == ESP_OK && esp_https_ota_is_complete_data_received(handle) &&
-        imageLength >= 0 && static_cast<size_t>(imageLength) == manifest.size &&
-        partitionMatchesManifest(target, manifest.size, manifest.sha256)) {
-        result = esp_https_ota_finish(handle);
-    } else {
-        DebugLog::log("OTA: downloaded image failed manifest verification bytes=%d expected=%lu",
-                      imageLength, static_cast<unsigned long>(manifest.size));
-        esp_https_ota_abort(handle);
-        if (result == ESP_OK) result = ESP_FAIL;
+    esp_ota_handle_t otaHandle = 0;
+    esp_err_t result = client && target && manifest.size <= target->size
+                           ? esp_ota_begin(target, manifest.size, &otaHandle)
+                           : ESP_ERR_INVALID_SIZE;
+    if (result != ESP_OK) {
+        DebugLog::log("OTA: could not begin update target=%s size=%u status=0x%x heap=%lu largest=%lu",
+                      target ? target->label : "unavailable", unsigned(manifest.size), unsigned(result),
+                      static_cast<unsigned long>(ESP.getFreeHeap()),
+                      static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
     }
+    size_t imageLength = 0;
+    if (result == ESP_OK) {
+        DebugLog::log("OTA: target slot=%s erase/write started size=%u",
+                      target->label, unsigned(manifest.size));
+        if (!downloadFirmware(client, otaHandle, manifest, imageLength)) {
+            esp_ota_abort(otaHandle);
+            result = ESP_FAIL;
+        } else {
+            DebugLog::log("OTA: transfer complete bytes=%u; validating image", unsigned(imageLength));
+            result = esp_ota_end(otaHandle);
+            DebugLog::log("OTA: image validation status=0x%x", unsigned(result));
+            if (result == ESP_OK && !partitionMatchesManifest(target, manifest.size, manifest.sha256)) {
+                DebugLog::log("OTA: image SHA-256 does not match manifest");
+                result = ESP_ERR_OTA_VALIDATE_FAILED;
+            }
+            if (result == ESP_OK) {
+                result = esp_ota_set_boot_partition(target);
+                DebugLog::log("OTA: next-boot slot selection status=0x%x", unsigned(result));
+            }
+        }
+    }
+    if (client) esp_http_client_cleanup(client);
     if (result == ESP_OK) {
         DebugLog::log("OTA: installed version=%s; rebooting", updateVersion_);
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -457,7 +660,7 @@ const char* OtaService::updateMessage() const {
         case UpdateState::UpToDate: return "Already up to date";
         case UpdateState::Available: return "Update available";
         case UpdateState::Installing: return "Installing update";
-        case UpdateState::Failed: return "Update check failed";
+        case UpdateState::Failed: return "Update failed; retry";
         default: return "Ready to check";
     }
 }

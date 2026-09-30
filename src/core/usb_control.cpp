@@ -285,8 +285,10 @@ void handleRequest(uint32_t id, uint32_t version, const char* command, const cha
         const auto* app = ersa::app::ApplicationManager::instance().getActiveApp();
         const char* appId = app ? app->getId() : "none";
         const auto& device = ersa::board::Board::current().getDeviceInfo();
+        const esp_app_desc_t* appDescription = esp_ota_get_app_description();
         char data[RESPONSE_LIMIT];
-        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"device_name\":\"%s\",\"codename\":\"%s\",\"manufacturer\":\"%s\",\"build\":\"%s %s\",\"running_slot\":\"%s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
+        snprintf(data, sizeof(data), "{\"firmware\":\"ErsaWearable\",\"version\":\"%s\",\"device_name\":\"%s\",\"codename\":\"%s\",\"manufacturer\":\"%s\",\"build\":\"%s %s\",\"running_slot\":\"%s\",\"uptime_seconds\":%lu,\"reset_reason\":\"%s\",\"active_app\":\"%s\",\"free_heap\":%lu,\"usb_session\":true,\"power_state\":\"%s\",\"power_locks_clear\":%s}",
+                 appDescription ? appDescription->version : "unknown",
                  device.name, device.codename, device.manufacturer,
                  __DATE__, __TIME__, otaSlotName(esp_ota_get_running_partition()), static_cast<unsigned long>(millis() / 1000), DebugLog::resetReasonName(), appId,
                  static_cast<unsigned long>(ESP.getFreeHeap()), powerStateName(power.getState()), power.canSleep() ? "true" : "false");

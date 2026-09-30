@@ -1,7 +1,7 @@
 # Ersa Wearable Platform Feature Catalog
 
 This catalog describes features present in the firmware represented by the
-`ewp-0.1.3` release. It distinguishes implemented behavior from planned
+`ewp-0.2.0` release. It distinguishes implemented behavior from planned
 integrations and calls out areas that still need measurements on the watch.
 
 ## Watch apps and interaction
@@ -93,12 +93,15 @@ integrations and calls out areas that still need measurements on the watch.
   `ersa-ewctl.db` and `ersa-ewctl.files` assets. Build locally with `makepkg -si`
   if preferred.
 - Each board's `DeviceInfo` supplies its display name, codename, and
-  manufacturer. `ewctl status`, BLE advertising, and OTA all use the selected
+  manufacturer. `ewctl status` also reports the compiled firmware version;
+  BLE advertising and OTA use the selected
   BSP's properties. OTA stores the latest manifest at
   `ota/<codename>/ota.json` and images at `firmware/<codename>/<tag>.bin`;
   Terra (`Ampere Terra`) currently publishes at `ota/terra/ota.json`.
 - The OTA service checks a compact HTTPS manifest, verifies release metadata
-  and SHA-256, and installs to the inactive app slot. Bootloader rollback
+  and SHA-256, downloads in resumable HTTP ranges with bounded retry/backoff,
+  and installs to the inactive app slot. OTA logs expose the current phase,
+  byte progress, and transport or validation failures. Bootloader rollback
   protects the previous image until the new firmware confirms startup. Existing
   watches require one USB migration using the release bootloader, partition
   table, OTA metadata, and app image; the script preserves NVS settings. New

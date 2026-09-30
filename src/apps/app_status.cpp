@@ -8,6 +8,7 @@
 #include "fonts/misans_fonts.h"
 #include "ersa/config/ui_strings.h"
 #include <Arduino.h>
+#include <esp_ota_ops.h>
 
 namespace AppStatus {
 
@@ -34,8 +35,8 @@ void render(Adafruit_GFX& display) {
 
     constexpr int16_t leftX = 18;
     constexpr int16_t valX = 86;
-    constexpr int16_t startY = 46;
-    constexpr int16_t rowHeight = 16;
+    constexpr int16_t startY = 45;
+    constexpr int16_t rowHeight = 14;
 
     // 1. RTC
     display.setCursor(leftX, startY);
@@ -86,6 +87,14 @@ void render(Adafruit_GFX& display) {
     display.print("sync");
     display.setCursor(valX, startY + rowHeight * 6);
     WatchText::line(display, NetSync::lastStatus(), valX, startY + rowHeight * 6, 98);
+
+    // The app descriptor is compiled into this exact image and distinguishes
+    // release firmware from local test builds.
+    const esp_app_desc_t* appDescription = esp_ota_get_app_description();
+    display.setCursor(leftX, startY + rowHeight * 7);
+    display.print("version");
+    WatchText::line(display, appDescription ? appDescription->version : "unknown",
+                    valX, startY + rowHeight * 7, 98);
 
     // Clean footer
     WatchText::line(display, ble.isConnected() ? "ble connected" : "b1: reconnect ble", leftX, 168, 166);

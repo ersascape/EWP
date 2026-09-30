@@ -87,6 +87,14 @@ public:
     // The worker alone owns all remote pointers and protocol state. Keep one
     // BLEClient for the BLEDevice lifetime: the library retains its GAP pointer.
     BLEClient* client_{nullptr};
+    // Arduino-ESP32's getServices() clears and destroys the previous service
+    // graph. Keep the graph across reconnects to the same peer; replacing the
+    // client is required if the peer or its GATT database changes.
+    bool servicesCached_{false};
+    esp_bd_addr_t servicesPeer_{};
+    esp_bd_addr_t sessionPeer_{};
+    bool haveServicesPeer_{false};
+    std::atomic<bool> replaceClient_{false};
     BLERemoteCharacteristic* control_{nullptr};
     BLERemoteCharacteristic* remote_{nullptr};
     protocols::AncsCall call_;
@@ -215,7 +223,11 @@ public:
     void changePeer(const uint8_t* address, esp_ble_addr_type_t type) {
         portENTER_CRITICAL(&controlMux_);
         wanted_ = address != nullptr;
-        if (address) { memcpy(peer_, address, sizeof(peer_)); addrType_ = type; }
+        if (address) {
+            memcpy(peer_, address, sizeof(peer_)); addrType_ = type;
+            if (haveServicesPeer_ && memcmp(servicesPeer_, address, sizeof(servicesPeer_)) != 0)
+                replaceClient_ = true;
+        }
         ++generation_;
         authenticatedGeneration_ = UINT32_MAX;
         ancsReady_ = false; amsReady_ = false;
@@ -428,16 +440,24 @@ public:
     }
 
     bool discover() {
-        // getServices() deletes the previous service objects. Never call it
-        // after subscriptions have been installed or retain pointers across it.
-        DebugLog::log("BLE-Apple: discovering services");
-        auto* services = client_->getServices();
-        if (!live() || !client_->isConnected()) return false;
-        if (!services) {
-            DebugLog::log("BLE-Apple: service discovery returned no result; retrying");
-            return false;
+        if (!servicesCached_) {
+            DebugLog::log("BLE-Apple: discovering services");
+            auto* services = client_->getServices();
+            if (!live() || !client_->isConnected()) return false;
+            if (!services) {
+                DebugLog::log("BLE-Apple: service discovery returned no result; replacing GATT client");
+                replaceClient_ = true;
+                return false;
+            }
+            servicesCached_ = true;
+            portENTER_CRITICAL(&controlMux_);
+            memcpy(servicesPeer_, sessionPeer_, sizeof(servicesPeer_));
+            haveServicesPeer_ = true;
+            portEXIT_CRITICAL(&controlMux_);
+            DebugLog::log("BLE-Apple: service search complete");
+        } else {
+            DebugLog::log("BLE-Apple: reusing cached GATT services after reconnect");
         }
-        DebugLog::log("BLE-Apple: service search complete");
         auto* ancs = client_->getService(BLEUUID(ANCS_SERVICE_UUID));
         auto* ams = client_->getService(BLEUUID(AMS_SERVICE_UUID));
         auto* cts = client_->getService(BLEUUID(CTS_SERVICE_UUID));
@@ -569,11 +589,23 @@ public:
             session_ = generation_.load();
             const bool wanted = wanted_;
             memcpy(peer, peer_, sizeof(peer)); type = addrType_;
+            memcpy(sessionPeer_, peer, sizeof(sessionPeer_));
             portEXIT_CRITICAL(&controlMux_);
             resetSession();
             if (!wanted) {
                 ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
                 continue;
+            }
+            if (replaceClient_.exchange(false)) {
+                // Do not delete the old BLEClient: its destructor recursively
+                // destroys descriptors whose semaphore teardown is unsafe in
+                // this Arduino BLE version. It is already disconnected; retain
+                // that small object graph until BLEDevice itself is stopped.
+                client_ = BLEDevice::createClient();
+                servicesCached_ = false;
+                haveServicesPeer_ = false;
+                if (!client_) { pause(1000); continue; }
+                DebugLog::log("BLE-Apple: created fresh GATT client for changed database/peer");
             }
             DebugLog::log("BLE-Apple: waiting for authentication (session=%lu)", (unsigned long)session_);
             while (live() && authenticatedGeneration_.load() != session_) {
@@ -589,6 +621,7 @@ public:
             bool ready = false;
             while (live() && client_->isConnected() && !ready) {
                 ready = discover();
+                if (!ready && replaceClient_) break;
                 if (!ready) pause(2000);
             }
             while (live() && client_->isConnected() && ready) {
@@ -644,16 +677,12 @@ public:
                     restartAncs();
                 }
                 if (servicesChanged_ && live()) {
-                    DebugLog::log("BLE-Apple: service change; rediscovering on existing connection");
-                    if (ancsReady_) { source_->registerForNotify(nullptr); data_->registerForNotify(nullptr); }
-                    if (amsReady_) { update_->registerForNotify(nullptr); remote_->registerForNotify(nullptr); }
-                    if (changed_) changed_->registerForNotify(nullptr, false);
+                    DebugLog::log("BLE-Apple: service change; replacing GATT client after disconnect");
                     if (call_.ringing && callCb_) callCb_(CompanionCallAction::Ended, "", "", callUserData_);
                     if (notifCb_) notifCb_(nullptr, nullptr, nullptr, 0, false, notifUserData_);
-                    resetSession();
-                    ready = discover();
-                    // Missing Apple services must not close the phone link.
-                    while (live() && client_->isConnected() && !ready) { pause(2000); ready = discover(); }
+                    replaceClient_ = true;
+                    ready = false;
+                    break;
                 }
                 requestNext();
                 taskYIELD();

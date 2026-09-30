@@ -1,5 +1,19 @@
 # Changelog
 
+## ewp-0.2.0
+
+- Resume interrupted HTTPS OTA range downloads from the last written byte, with
+  bounded retries and backoff for transient connection resets.
+- Validate each HTTP range and the embedded image version before selecting the
+  inactive slot; verify the complete image against the manifest SHA-256.
+- Add OTA phase, byte-progress, transport, flash, validation, and slot-selection
+  diagnostics, and show a retryable failure state in the updater.
+- Reuse the Apple GATT service cache across reconnects to avoid the BLE
+  descriptor teardown panic; replace the client after a peer or service change.
+- Show the compiled firmware version in Status and `ewctl status`.
+
+See [release notes](release-notes/ewp-0.2.0.md) for details.
+
 ## ewp-0.1.5
 
 - Keep BLE suspended between a successful OTA check and installation to avoid
